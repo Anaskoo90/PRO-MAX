@@ -1,0 +1,34 @@
+version: "3"
+
+# Cross-ecosystem orchestration: bridges the pnpm/Turborepo (TS) workspace
+# and the uv (Python) workspace, since Turborepo cannot drive uv tasks.
+
+tasks:
+  bootstrap:
+    desc: Install all workspace dependencies (JS + Python)
+    cmds:
+      - pnpm install
+      - uv sync --all-packages
+
+  build:
+    desc: Build all apps and packages
+    cmds:
+      - pnpm turbo run build
+
+  test:
+    desc: Run all test suites (JS + Python)
+    cmds:
+      - pnpm turbo run test
+      - uv run --package guilddesk-platform pytest services/platform
+
+  lint:
+    desc: Lint all workspaces
+    cmds:
+      - pnpm turbo run lint
+      - uv run --package guilddesk-platform ruff check services/platform
+
+  dev:api:
+    desc: Run the platform API locally
+    dir: services/platform
+    cmds:
+      - uv run uvicorn app.main:app --reload --port 8000

@@ -1,0 +1,31 @@
+version: "3.9"
+
+# Local development environment only. Cloud provider for staging/prod
+# infrastructure is still undecided (standing gap, restated from the
+# Enterprise Architecture pack) — this file covers local dev exclusively.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: guilddesk
+      POSTGRES_PASSWORD: guilddesk
+      POSTGRES_DB: guilddesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+volumes:
+  pgdata:
