@@ -110,6 +110,29 @@ class Role(EventRecordingMixin):
         self.permission_ids.add(permission_id)
         self.record_event(PermissionAssignedToRole(aggregate_id=self.id, permission_id=permission_id))
 
+    def grant_permission_during_bootstrap(self, permission_id: EntityId) -> None:
+        """Bootstrap-only counterpart to grant_permission, called exclusively
+        by seed_identity() (infrastructure/seed_data.py) to establish and grow
+        a system role's permission set as new bounded contexts register their
+        own permissions into the shared catalog over time.
+
+        Deliberately bypasses _assert_mutable(): a system role's *contents*
+        (its granted permissions) are expected to grow at bootstrap time as
+        the platform grows — org_owner/org_admin are documented as covering
+        "every resource, including ones contexts introduce later" — but its
+        identity and structure must never change through the public API.
+        rename/set_parent/grant_permission/revoke_permission/mark_deleted all
+        remain fully blocked for system roles via _assert_mutable(); this
+        method does not touch that guard, it is a distinct, narrowly-scoped
+        operation that only the trusted bootstrap process can reach (it is
+        never wired into RoleService or any HTTP route). That distinction —
+        "the bootstrap process extended a system role's grants" versus "a
+        user modified a system role" — is exactly the invariant this class
+        exists to protect, so it's modeled as its own named domain operation
+        rather than a conditional bypass on the general-purpose method."""
+        self.permission_ids.add(permission_id)
+        self.record_event(PermissionAssignedToRole(aggregate_id=self.id, permission_id=permission_id))
+
     def revoke_permission(self, permission_id: EntityId) -> None:
         self._assert_mutable()
         self.permission_ids.discard(permission_id)

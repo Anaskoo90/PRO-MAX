@@ -7,9 +7,12 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from app.boards.infrastructure.orm_models import BoardsBase
 from app.identity.infrastructure.orm_models import IdentityBase
 from app.platform_core.configuration.settings import get_settings
 from app.projects.infrastructure.orm_models import ProjectsBase
+from app.tasks.infrastructure.orm_models import TasksBase
+from app.workflow_engine.infrastructure.orm_models import WorkflowEngineBase
 
 config = context.config
 
@@ -17,9 +20,10 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Each bounded context's Base metadata is combined here as the context is
-# implemented (app.crm.infrastructure.orm_models.CrmBase, ...) — Identity
-# and Projects & Workspaces so far.
-target_metadata = [IdentityBase.metadata, ProjectsBase.metadata]
+# implemented (app.crm.infrastructure.orm_models.CrmBase, ...) — Identity,
+# Projects & Workspaces, Tasks & Work Management, Boards & Agile
+# Management, and Workflow Engine so far.
+target_metadata = [IdentityBase.metadata, ProjectsBase.metadata, TasksBase.metadata, BoardsBase.metadata, WorkflowEngineBase.metadata]
 
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", str(settings.database_url))

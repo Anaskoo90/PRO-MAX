@@ -107,7 +107,15 @@ async def seed_identity(
             await uow.roles.add(role)
         for key in permission_keys:
             permission = existing_permissions[key]
-            role.grant_permission(permission.id)
+            # grant_permission_during_bootstrap, not grant_permission: system
+            # roles are immutable through the public API (Role._assert_mutable
+            # still enforces that everywhere else), but the seed process is the
+            # one trusted place allowed to establish and grow their permission
+            # sets as the catalog grows across bounded contexts. Guarded so a
+            # repeat idempotent seed run doesn't re-fire PermissionAssignedToRole
+            # for grants the role already has.
+            if permission.id not in role.permission_ids:
+                role.grant_permission_during_bootstrap(permission.id)
         await uow.roles.update(role)
 
     await uow.commit()
