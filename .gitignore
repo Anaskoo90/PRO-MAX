@@ -1,0 +1,46 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- uv ---
+# uv.lock is intentionally NOT ignored — it's committed for reproducible installs.
+.uv/
+
+# --- Test / lint / type-check caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Logs ---
+*.log
+
+# --- Environment files (never commit real secrets) ---
+.env
+.env.*
+!.env.example
+discord_bot/.env
+services/platform/.env
+
+# --- Local runtime data ---
+.local-storage/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db

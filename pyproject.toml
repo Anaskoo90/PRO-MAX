@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["services/platform"]
+members = ["services/platform", "discord_bot"]
 
 [tool.ruff]
 line-length = 100

@@ -9,7 +9,8 @@ construction-order dependency on composition.py.
 
 from __future__ import annotations
 
-from fastapi import Depends, Header
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.identity.application.authentication import AuthenticationService, OAuth2LoginService
 from app.identity.application.email_verification import EmailVerificationService
@@ -24,7 +25,16 @@ from app.identity.application.user_management import UserManagementService
 from app.platform_core.errors.api_exceptions import UnauthorizedError
 from app.platform_core.security.token import JwtTokenService, TokenClaims
 
-_bearer_prefix = "Bearer "
+# auto_error=False: a missing/malformed Authorization header must still
+# raise *our* UnauthorizedError (same shape/message every other auth
+# failure in this codebase uses), not HTTPBearer's own default
+# HTTPException(403, "Not authenticated"). Being a fastapi.security.SecurityBase
+# instance is what makes FastAPI register this as an OpenAPI security
+# scheme and show Swagger's global "Authorize" button — that registration
+# happens because of the type of this object, not because of how routers
+# depend on it, so every existing router keeps working unchanged via
+# Depends(get_current_user_claims).
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_token_service() -> JwtTokenService:
@@ -84,13 +94,12 @@ def get_audit_log_query_service() -> AuditLogQueryService:
 
 
 async def get_current_user_claims(
-    authorization: str = Header(default=""),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     token_service: JwtTokenService = Depends(get_token_service),
 ) -> TokenClaims:
-    if not authorization.startswith(_bearer_prefix):
+    if credentials is None or not credentials.credentials:
         raise UnauthorizedError("Missing or malformed Authorization header")
-    raw_token = authorization[len(_bearer_prefix) :]
     try:
-        return token_service.verify(raw_token)
+        return token_service.verify(credentials.credentials)
     except Exception as exc:
         raise UnauthorizedError("Invalid or expired access token") from exc
