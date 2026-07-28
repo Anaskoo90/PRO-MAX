@@ -80,6 +80,13 @@ class UserManagementService:
                 org_id=org_id, email=email_vo, password_hash=password_hash, display_name=display_name
             )
             await uow.users.add(user)
+            # Flush before adding the password-history row: password_history
+            # has a real FK on users.id, but the two ORM models have no
+            # relationship() between them (by design — see orm_models.py),
+            # so SQLAlchemy won't auto-order the two INSERTs across a single
+            # flush. Without this, the password_history insert can be sent
+            # before the user row exists, violating the FK constraint.
+            await uow.flush()
             await uow.password_history.add(
                 PasswordHistoryEntry.create(user_id=user.id, password_hash=password_hash)
             )

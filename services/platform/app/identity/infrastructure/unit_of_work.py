@@ -73,6 +73,20 @@ class IdentityUnitOfWork:
             await self.session.rollback()
         await self.session.close()
 
+    async def flush(self) -> None:
+        """Pushes pending inserts/updates to the DB within the current
+        transaction without committing — needed when one aggregate's
+        auto-generated/just-assigned id must be visible to a foreign-key
+        constraint before a second, dependent object in the same unit of
+        work is flushed. SQLAlchemy only auto-orders cross-table INSERTs via
+        explicit ORM relationship() cascades; these ORM models intentionally
+        have none (see orm_models.py's ADR-005..009 note), so call sites
+        with a real FK dependency between two newly-created rows in the same
+        commit (e.g. UserManagementService.register() with a User + its
+        first PasswordHistoryEntry) must flush between the two adds."""
+        assert self.session is not None
+        await self.session.flush()
+
     async def commit(self) -> None:
         assert self.session is not None
         await self.session.commit()

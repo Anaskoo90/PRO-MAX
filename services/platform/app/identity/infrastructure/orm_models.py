@@ -18,13 +18,23 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class IdentityBase(DeclarativeBase):
-    pass
+    # Every Postgres column backing a bare Mapped[datetime] is TIMESTAMPTZ
+    # (see the alembic migration's explicit sa.TIMESTAMP(timezone=True)),
+    # but SQLAlchemy's default type-annotation mapping for `datetime` is
+    # timezone-*naive* DateTime() unless told otherwise — a mismatch against
+    # utcnow() (platform_core.shared_kernel.utils), which is always
+    # tz-aware. Without this, asyncpg rejects any explicitly-set (not
+    # server-default) datetime value bound as a query parameter with
+    # "can't subtract offset-naive and offset-aware datetimes". Mapping the
+    # annotation here fixes every Mapped[datetime] column in this context
+    # at once, matching what's actually on the wire.
+    type_annotation_map = {datetime: DateTime(timezone=True)}
 
 
 class UserOrmModel(IdentityBase):

@@ -7,8 +7,23 @@ are structural and any object with matching methods satisfies them.
 
 from __future__ import annotations
 
+from app.identity.domain.entities import User
 from app.identity.domain.rbac import Permission, Role, UserRoleAssignment
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+
+
+class FakeUserRepository:
+    def __init__(self) -> None:
+        self.users: dict[EntityId, User] = {}
+
+    async def get_by_id(self, user_id: EntityId) -> User | None:
+        return self.users.get(user_id)
+
+    async def add(self, user: User) -> None:
+        self.users[user.id] = user
+
+    async def update(self, user: User) -> None:
+        self.users[user.id] = user
 
 
 class FakeRoleRepository:
@@ -91,7 +106,8 @@ class FakeUnitOfWork:
     test that touches one accidentally gets a clear AttributeError rather
     than silently succeeding against an empty fake."""
 
-    def __init__(self, *, roles=None, permissions=None, user_role_assignments=None, audit_logs=None) -> None:
+    def __init__(self, *, users=None, roles=None, permissions=None, user_role_assignments=None, audit_logs=None) -> None:
+        self.users = users or FakeUserRepository()
         self.roles = roles or FakeRoleRepository()
         self.permissions = permissions or FakePermissionRepository()
         self.user_role_assignments = user_role_assignments or FakeUserRoleAssignmentRepository()

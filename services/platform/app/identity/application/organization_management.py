@@ -92,8 +92,16 @@ class OrganizationManagementService:
                 display_name=owner_display_name,
             )
 
+            # Flushed between each dependent add: org/user/password_history/
+            # user_role_assignments have real FK chains (users.org_id ->
+            # organizations.id, password_history.user_id -> users.id), but
+            # the ORM models have no relationship() between them by design
+            # (see identity/infrastructure/orm_models.py), so SQLAlchemy
+            # won't auto-order these INSERTs within a single flush.
             await uow.organizations.add(org)
+            await uow.flush()
             await uow.users.add(owner)
+            await uow.flush()
             await uow.password_history.add(PasswordHistoryEntry.create(user_id=owner.id, password_hash=password_hash))
 
             owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)

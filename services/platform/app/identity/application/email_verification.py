@@ -21,13 +21,17 @@ from app.identity.domain.exceptions import (
     UserNotFoundError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
+    NoProviderRegisteredError,
     NotificationChannel,
     NotificationDispatcher,
     NotificationRequest,
 )
 from app.platform_core.security.hashing import hash_for_lookup
 from app.platform_core.shared_kernel.types import EntityId, OrgId
+
+_logger = get_logger("identity.email_verification")
 
 _TOKEN_PEPPER = "change-me-in-production"  # see platform_core.security.secrets_provider
 
@@ -60,15 +64,24 @@ class EmailVerificationService:
             )
             await uow.commit()
 
-        await self._notification_dispatcher.dispatch(
-            NotificationRequest(
-                org_id=org_id,
-                channel=NotificationChannel.EMAIL,
-                recipient=email,
-                subject="Verify your GuildDesk email address",
-                body=f"{self._verification_link_base_url}?token={raw_token}",
+        try:
+            await self._notification_dispatcher.dispatch(
+                NotificationRequest(
+                    org_id=org_id,
+                    channel=NotificationChannel.EMAIL,
+                    recipient=email,
+                    subject="Verify your GuildDesk email address",
+                    body=f"{self._verification_link_base_url}?token={raw_token}",
+                )
             )
-        )
+        except NoProviderRegisteredError:
+            # No email provider is wired in this environment yet (a real
+            # SES/SendGrid/etc. integration is a deployment-time decision,
+            # not made in platform_core — see EmailProvider's docstring).
+            # The verification token is already persisted and resend_verification
+            # exists for when a provider is configured, so this must not fail
+            # the registration request that triggered it.
+            await _logger.awarning("email_verification_send_skipped_no_provider", user_id=str(user_id))
 
     async def resend_verification(self, *, user_id: EntityId) -> None:
         async with self._uow_factory() as uow:

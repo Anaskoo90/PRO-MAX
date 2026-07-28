@@ -21,13 +21,17 @@ from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.events import SuspiciousLoginDetected
 from app.identity.domain.exceptions import BruteForceProtectionTriggeredError, IpAddressRestrictedError
 from app.identity.domain.security_entities import TrustedDevice
+from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
+    NoProviderRegisteredError,
     NotificationChannel,
     NotificationDispatcher,
     NotificationRequest,
 )
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import utcnow
+
+_logger = get_logger("identity.security")
 
 
 class RateLimitStore(Protocol):
@@ -201,13 +205,25 @@ class SuspiciousLoginNotifier:
             user = await uow.users.get_by_id(EntityId(event.aggregate_id))
         if user is None:
             return
-        await self._notification_dispatcher.dispatch(
-            NotificationRequest(
-                org_id=user.org_id,
-                channel=NotificationChannel.EMAIL,
-                recipient=str(user.email),
-                subject="New sign-in to your GuildDesk account",
-                body=f"A new sign-in was detected from IP address {event.ip_address}. "
-                "If this wasn't you, reset your password immediately.",
+        try:
+            await self._notification_dispatcher.dispatch(
+                NotificationRequest(
+                    org_id=user.org_id,
+                    channel=NotificationChannel.EMAIL,
+                    recipient=str(user.email),
+                    subject="New sign-in to your GuildDesk account",
+                    body=f"A new sign-in was detected from IP address {event.ip_address}. "
+                    "If this wasn't you, reset your password immediately.",
+                )
             )
-        )
+        except NoProviderRegisteredError:
+            # No email provider is wired in this environment yet (a real
+            # SES/SendGrid/etc. integration is a deployment-time decision,
+            # not made in platform_core — see EmailProvider's docstring).
+            # The login itself already succeeded and its own event already
+            # fired; failing to deliver this best-effort security alert must
+            # not turn a valid login into a 500. Any other notification
+            # failure (a misbehaving real provider, etc.) still propagates.
+            await _logger.awarning(
+                "suspicious_login_alert_skipped_no_provider", user_id=str(user.id), ip_address=event.ip_address
+            )

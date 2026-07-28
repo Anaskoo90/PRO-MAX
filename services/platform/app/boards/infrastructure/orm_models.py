@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -18,7 +18,11 @@ _ESTIMATE_TYPE_CHECK = "estimate_type IN ('story_points','hours','custom')"
 
 
 class BoardsBase(DeclarativeBase):
-    pass
+    # See IdentityBase's identical type_annotation_map for why: bare
+    # Mapped[datetime] binds as timezone-naive by default, but the actual
+    # Postgres columns are TIMESTAMPTZ and utcnow() is tz-aware — this
+    # closes that mismatch for every datetime column in this context.
+    type_annotation_map = {datetime: DateTime(timezone=True)}
 
 
 class BoardOrmModel(BoardsBase):
