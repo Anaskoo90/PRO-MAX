@@ -52,6 +52,8 @@ class Organization(EventRecordingMixin):
         owner_user_id: UserId,
         status: OrganizationStatus,
         settings: dict[str, Any] | None = None,
+        description: str | None = None,
+        logo_url: str | None = None,
         version: int = 1,
     ) -> None:
         super().__init__()
@@ -61,6 +63,8 @@ class Organization(EventRecordingMixin):
         self.owner_user_id = owner_user_id
         self.status = status
         self.settings = settings or {}
+        self.description = description
+        self.logo_url = logo_url
         self.version = version
 
     @classmethod
@@ -77,6 +81,19 @@ class Organization(EventRecordingMixin):
 
     def rename(self, new_name: str) -> None:
         self.name = new_name
+
+    def change_slug(self, new_slug: str) -> None:
+        """Same validation as creation-time — a slug is still a slug once
+        the org already exists. Uniqueness against other organizations is
+        an application-layer concern (needs a repository lookup), not
+        something this entity can check on its own."""
+        self.slug = _validate_slug(new_slug)
+
+    def update_description(self, description: str) -> None:
+        self.description = description
+
+    def update_logo_url(self, logo_url: str | None) -> None:
+        self.logo_url = logo_url
 
     def update_settings(self, patch: dict[str, Any]) -> None:
         self.settings = {**self.settings, **patch}

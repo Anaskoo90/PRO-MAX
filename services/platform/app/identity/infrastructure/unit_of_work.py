@@ -6,6 +6,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.identity.infrastructure.audit_repository import SqlAlchemyAuditLogRepository
+from app.identity.infrastructure.invitation_repository import SqlAlchemyOrganizationInvitationRepository
 from app.identity.infrastructure.organization_repository import SqlAlchemyOrganizationRepository
 from app.identity.infrastructure.outbox import SqlAlchemyOutboxWriter
 from app.identity.infrastructure.rbac_repositories import (
@@ -39,6 +40,7 @@ class IdentityUnitOfWork:
         self.password_reset_tokens: SqlAlchemyPasswordResetTokenRepository | None = None
         self.password_history: SqlAlchemyPasswordHistoryRepository | None = None
         self.organizations: SqlAlchemyOrganizationRepository | None = None
+        self.organization_invitations: SqlAlchemyOrganizationInvitationRepository | None = None
         self.teams: SqlAlchemyTeamRepository | None = None
         self.team_memberships: SqlAlchemyTeamMembershipRepository | None = None
         self.roles: SqlAlchemyRoleRepository | None = None
@@ -57,6 +59,7 @@ class IdentityUnitOfWork:
         self.password_reset_tokens = SqlAlchemyPasswordResetTokenRepository(self.session)
         self.password_history = SqlAlchemyPasswordHistoryRepository(self.session)
         self.organizations = SqlAlchemyOrganizationRepository(self.session)
+        self.organization_invitations = SqlAlchemyOrganizationInvitationRepository(self.session)
         self.teams = SqlAlchemyTeamRepository(self.session)
         self.team_memberships = SqlAlchemyTeamMembershipRepository(self.session)
         self.roles = SqlAlchemyRoleRepository(self.session)

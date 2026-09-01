@@ -19,6 +19,7 @@ from app.identity.domain.exceptions import (
     RoleAlreadyExistsError,
     RoleHierarchyCycleError,
     RoleNotFoundError,
+    UserNotFoundError,
 )
 from app.identity.domain.rbac import Role, UserRoleAssignment
 from app.platform_core.events.dispatcher import EventDispatcher
@@ -192,8 +193,23 @@ class RoleService:
 
     async def assign_role_to_user(self, *, user_id: UserId, role_id: EntityId, org_id: OrgId, actor_user_id: UUID) -> None:
         async with self._uow_factory() as uow:
-            if await uow.roles.get_by_id(role_id) is None:
+            role = await uow.roles.get_by_id(role_id)
+            # A role from a *different* organization's custom-role set must
+            # be just as invalid a target as one that doesn't exist at all —
+            # otherwise an org_admin could assign another tenant's custom
+            # role to one of their own users purely by guessing its id.
+            # System roles (org_id is None) are shared across every org, so
+            # those are always a valid target.
+            if role is None or (role.org_id is not None and role.org_id != org_id):
                 raise RoleNotFoundError(role_id)
+
+            user = await uow.users.get_by_id(EntityId(user_id))
+            # Likewise, the target user must actually belong to the caller's
+            # org — without this, org_id on the new UserRoleAssignment row
+            # would silently disagree with the user's real organization.
+            if user is None or user.org_id != org_id:
+                raise UserNotFoundError(user_id)
+
             if await uow.user_role_assignments.get(user_id, role_id) is not None:
                 return
             await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=user_id, role_id=role_id, org_id=org_id))
@@ -209,7 +225,7 @@ class RoleService:
     async def revoke_role_from_user(self, *, user_id: UserId, role_id: EntityId, org_id: OrgId, actor_user_id: UUID) -> None:
         async with self._uow_factory() as uow:
             assignment = await uow.user_role_assignments.get(user_id, role_id)
-            if assignment is None:
+            if assignment is None or assignment.org_id != org_id:
                 return
             await uow.user_role_assignments.delete(assignment.id)
             await uow.audit_logs.add(
@@ -226,3 +242,13 @@ class RoleService:
             system_roles = await uow.roles.list_system_roles()
             org_roles = await uow.roles.list_for_org(org_id)
             return [_role_to_dto(r) for r in (*system_roles, *org_roles)]
+
+    async def list_roles_for_user(self, *, user_id: UserId, org_id: OrgId) -> list[RoleDTO]:
+        """The other direction of assign/revoke — lets the dashboard show a
+        member's *current* roles before toggling them, rather than the
+        Roles page having to blindly re-derive that from assign/revoke
+        calls that already succeeded."""
+        async with self._uow_factory() as uow:
+            assignments = await uow.user_role_assignments.list_for_user(user_id, org_id)
+            roles = [await uow.roles.get_by_id(a.role_id) for a in assignments]
+            return [_role_to_dto(r) for r in roles if r is not None]

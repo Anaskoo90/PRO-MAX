@@ -21,6 +21,7 @@ from app.identity.domain.entities import Session, User
 from app.identity.domain.exceptions import (
     AccountLockedError,
     InvalidCredentialsError,
+    OrganizationNotFoundError,
     SessionNotFoundError,
     UserNotFoundError,
 )
@@ -68,18 +69,26 @@ class AuthenticationService:
     async def login(
         self,
         *,
-        org_id: OrgId,
+        org_id: OrgId | None = None,
+        org_slug: str | None = None,
         email: str,
         password: str,
         ip_address: str,
         device_info: dict | None,
         remember_me: bool,
     ) -> LoginResult:
+        """Callers identify the organization by UUID (internal/API clients,
+        unchanged) or by slug (the web dashboard's login form, Phase 2B) —
+        exactly one must be given (enforced by LoginRequest at the API
+        boundary); everything below this point only ever deals with the
+        resolved UUID, so the rest of this method's logic is untouched."""
+        resolved_org_id = await self._resolve_org_id(org_id=org_id, org_slug=org_slug)
+
         if self._security_service is not None:
-            await self._security_service.check_login_allowed(org_id=org_id, ip_address=ip_address)
+            await self._security_service.check_login_allowed(org_id=resolved_org_id, ip_address=ip_address)
 
         async with self._uow_factory() as uow:
-            user = await uow.users.get_by_email(org_id, email.strip().lower())
+            user = await uow.users.get_by_email(resolved_org_id, email.strip().lower())
             if user is None:
                 raise InvalidCredentialsError()
 
@@ -117,9 +126,20 @@ class AuthenticationService:
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
-                org_id=org_id, actor_id=user.id, action="login", resource_type="user", resource_id=str(user.id)
+                org_id=resolved_org_id, actor_id=user.id, action="login", resource_type="user", resource_id=str(user.id)
             )
             return LoginResult(tokens=tokens)
+
+    async def _resolve_org_id(self, *, org_id: OrgId | None, org_slug: str | None) -> OrgId:
+        if org_id is not None:
+            return org_id
+        if org_slug is None:
+            raise ValueError("Either org_id or org_slug must be provided")
+        async with self._uow_factory() as uow:
+            org = await uow.organizations.get_by_slug(org_slug)
+            if org is None:
+                raise OrganizationNotFoundError(org_slug)
+            return OrgId(org.id)
 
     async def complete_mfa_challenge(self, *, user_id: EntityId, ip_address: str, device_info: dict | None, remember_me: bool) -> AuthTokens:
         """Called by mfa.py's VerifyMfaChallenge after a successful MFA

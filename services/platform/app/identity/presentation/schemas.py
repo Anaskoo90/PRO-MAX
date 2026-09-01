@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class RegisterUserRequest(BaseModel):
@@ -19,10 +19,21 @@ class RegisterUserRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    org_id: UUID
+    # The web dashboard authenticates with org_slug (Phase 2B) rather than
+    # asking users to know their organization's raw UUID; internal/API
+    # clients may still pass org_id directly — exactly one of the two must
+    # be given.
+    org_id: UUID | None = None
+    org_slug: str | None = None
     email: EmailStr
     password: str
     remember_me: bool = False
+
+    @model_validator(mode="after")
+    def _exactly_one_org_identifier(self) -> "LoginRequest":
+        if (self.org_id is None) == (self.org_slug is None):
+            raise ValueError("Provide exactly one of org_id or org_slug")
+        return self
 
 
 class MfaChallengeResponse(BaseModel):
@@ -146,10 +157,18 @@ class OrganizationResponse(BaseModel):
     owner_user_id: UUID
     status: str
     settings: dict[str, Any]
+    description: str | None
+    logo_url: str | None
 
 
 class UpdateOrganizationRequest(BaseModel):
+    # Phase 2B's Organization Settings foundation: name/slug/description/
+    # logo_url only — deliberately not the freeform `settings` dict, which
+    # PUT /organizations/{org_id}/settings still owns exclusively.
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=50)
+    description: str | None = Field(default=None, max_length=2000)
+    logo_url: str | None = Field(default=None, max_length=2000)
 
 
 class UpdateOrganizationSettingsRequest(BaseModel):
@@ -158,6 +177,31 @@ class UpdateOrganizationSettingsRequest(BaseModel):
 
 class TransferOwnershipRequest(BaseModel):
     new_owner_user_id: UUID
+
+
+# --- Organization Invitations ------------------------------------------
+
+
+class CreateInvitationRequest(BaseModel):
+    email: EmailStr
+    role_id: UUID
+
+
+class InvitationResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    email: str
+    role_id: UUID
+    invited_by_user_id: UUID
+    status: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=200)
 
 
 # --- Teams ------------------------------------------------------------------
@@ -242,6 +286,17 @@ class PermissionResponse(BaseModel):
     resource: str
     action: str
     description: str
+
+
+class PermissionMatrixResponse(BaseModel):
+    """Dashboard-friendly aggregation of two existing reads (the full
+    permission catalog + this org's roles, each with their permission_ids)
+    into one response — no change to permissions themselves, so the
+    Roles page can render a roles x permissions grid without a second
+    round trip or client-side join."""
+
+    permissions: list[PermissionResponse]
+    roles: list[RoleResponse]
 
 
 # --- Security -----------------------------------------------------------

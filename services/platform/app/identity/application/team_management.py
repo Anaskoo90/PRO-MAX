@@ -45,6 +45,8 @@ class TeamService:
         self, *, org_id: OrgId, name: str, description: str = "", parent_team_id: EntityId | None = None
     ) -> TeamDTO:
         async with self._uow_factory() as uow:
+            if parent_team_id is not None:
+                await self._get_team_for_org(uow, team_id=parent_team_id, org_id=org_id)
             team = Team.create(org_id=org_id, name=name, description=description, parent_team_id=parent_team_id)
             await uow.teams.add(team)
             events = team.pull_domain_events()
@@ -52,11 +54,11 @@ class TeamService:
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
 
-    async def update_team(self, *, team_id: EntityId, name: str | None, description: str | None) -> TeamDTO:
+    async def update_team(
+        self, *, org_id: OrgId, team_id: EntityId, name: str | None, description: str | None
+    ) -> TeamDTO:
         async with self._uow_factory() as uow:
-            team = await uow.teams.get_by_id(team_id)
-            if team is None:
-                raise TeamNotFoundError(team_id)
+            team = await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             team.update(name=name, description=description)
             await uow.teams.update(team)
             events = team.pull_domain_events()
@@ -64,15 +66,14 @@ class TeamService:
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
 
-    async def set_parent(self, *, team_id: EntityId, parent_team_id: EntityId | None) -> TeamDTO:
+    async def set_parent(self, *, org_id: OrgId, team_id: EntityId, parent_team_id: EntityId | None) -> TeamDTO:
         async with self._uow_factory() as uow:
-            team = await uow.teams.get_by_id(team_id)
-            if team is None:
-                raise TeamNotFoundError(team_id)
+            team = await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
 
             if parent_team_id is not None:
                 if parent_team_id == team_id:
                     raise TeamHierarchyCycleError()
+                await self._get_team_for_org(uow, team_id=parent_team_id, org_id=org_id)
                 teams_by_id: dict[EntityId, Team] = {}
                 cursor: EntityId | None = parent_team_id
                 while cursor is not None:
@@ -91,21 +92,20 @@ class TeamService:
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
 
-    async def delete_team(self, *, team_id: EntityId) -> None:
+    async def delete_team(self, *, org_id: OrgId, team_id: EntityId) -> None:
         async with self._uow_factory() as uow:
-            team = await uow.teams.get_by_id(team_id)
-            if team is None:
-                raise TeamNotFoundError(team_id)
+            team = await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             team.delete()
             await uow.teams.update(team)
             events = team.pull_domain_events()
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
-    async def add_member(self, *, team_id: EntityId, user_id: UserId, team_role: TeamRole = TeamRole.MEMBER) -> TeamMembershipDTO:
+    async def add_member(
+        self, *, org_id: OrgId, team_id: EntityId, user_id: UserId, team_role: TeamRole = TeamRole.MEMBER
+    ) -> TeamMembershipDTO:
         async with self._uow_factory() as uow:
-            if await uow.teams.get_by_id(team_id) is None:
-                raise TeamNotFoundError(team_id)
+            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             existing = await uow.team_memberships.get(team_id, user_id)
             if existing is not None:
                 return _membership_to_dto(existing)
@@ -114,8 +114,11 @@ class TeamService:
             await uow.commit()
             return _membership_to_dto(membership)
 
-    async def update_member_role(self, *, team_id: EntityId, user_id: UserId, team_role: TeamRole) -> TeamMembershipDTO:
+    async def update_member_role(
+        self, *, org_id: OrgId, team_id: EntityId, user_id: UserId, team_role: TeamRole
+    ) -> TeamMembershipDTO:
         async with self._uow_factory() as uow:
+            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             membership = await uow.team_memberships.get(team_id, user_id)
             if membership is None:
                 raise TeamMembershipNotFoundError(team_id, user_id)
@@ -124,8 +127,9 @@ class TeamService:
             await uow.commit()
             return _membership_to_dto(membership)
 
-    async def remove_member(self, *, team_id: EntityId, user_id: UserId) -> None:
+    async def remove_member(self, *, org_id: OrgId, team_id: EntityId, user_id: UserId) -> None:
         async with self._uow_factory() as uow:
+            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             membership = await uow.team_memberships.get(team_id, user_id)
             if membership is None:
                 raise TeamMembershipNotFoundError(team_id, user_id)
@@ -137,7 +141,20 @@ class TeamService:
             memberships = await uow.team_memberships.list_for_team(team_id)
             return [_membership_to_dto(m) for m in memberships]
 
+    async def list_members_for_org(self, *, org_id: OrgId, team_id: EntityId) -> list[TeamMembershipDTO]:
+        async with self._uow_factory() as uow:
+            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
+            memberships = await uow.team_memberships.list_for_team(team_id)
+            return [_membership_to_dto(m) for m in memberships]
+
     async def list_teams_for_org(self, *, org_id: OrgId) -> list[TeamDTO]:
         async with self._uow_factory() as uow:
             teams = await uow.teams.list_for_org(org_id)
             return [_to_dto(t) for t in teams]
+
+    @staticmethod
+    async def _get_team_for_org(uow, *, team_id: EntityId, org_id: OrgId) -> Team:
+        team = await uow.teams.get_by_id(team_id)
+        if team is None or team.org_id != org_id:
+            raise TeamNotFoundError(team_id)
+        return team

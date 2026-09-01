@@ -81,6 +81,13 @@ class WorkspaceService:
                 raise WorkspaceNotFoundError(workspace_id)
             return _to_dto(workspace)
 
+    async def get_for_org(self, *, org_id: OrgId, workspace_id: EntityId) -> WorkspaceDTO:
+        async with self._uow_factory() as uow:
+            workspace = await uow.workspaces.get_by_id(workspace_id)
+            if workspace is None or workspace.org_id != org_id:
+                raise WorkspaceNotFoundError(workspace_id)
+            return _to_dto(workspace)
+
     async def list_for_org(self, *, org_id: OrgId) -> list[WorkspaceDTO]:
         async with self._uow_factory() as uow:
             workspaces = await uow.workspaces.list_for_org(org_id)
@@ -189,6 +196,14 @@ class WorkspaceService:
 
     async def list_members(self, *, workspace_id: EntityId) -> list[WorkspaceMembershipDTO]:
         async with self._uow_factory() as uow:
+            memberships = await uow.workspace_memberships.list_for_workspace(workspace_id)
+            return [_membership_to_dto(m) for m in memberships]
+
+    async def list_members_for_org(self, *, org_id: OrgId, workspace_id: EntityId) -> list[WorkspaceMembershipDTO]:
+        async with self._uow_factory() as uow:
+            workspace = await uow.workspaces.get_by_id(workspace_id)
+            if workspace is None or workspace.org_id != org_id:
+                raise WorkspaceNotFoundError(workspace_id)
             memberships = await uow.workspace_memberships.list_for_workspace(workspace_id)
             return [_membership_to_dto(m) for m in memberships]
 

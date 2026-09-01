@@ -6,6 +6,7 @@ from fastapi import Depends, File, UploadFile
 
 from app.identity.application.user_management import UserManagementService
 from app.identity.presentation import deps
+from app.identity.presentation.authorization import require_permission
 from app.identity.presentation.schemas import (
     RegisterUserRequest,
     UpdatePreferencesRequest,
@@ -96,25 +97,34 @@ async def deactivate_my_account(
     await service.deactivate_account(user_id=claims.subject_user_id)
 
 
-@router.post("/users/{user_id}/suspend", response_model=DataResponse[UserProfileResponse])
+@router.post(
+    "/users/{user_id}/suspend",
+    response_model=DataResponse[UserProfileResponse],
+    dependencies=[Depends(require_permission("user", "manage_status"))],
+)
 async def suspend_user(
     user_id: str,
     reason: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: UserManagementService = Depends(deps.get_user_management_service),
 ) -> DataResponse[UserProfileResponse]:
-    """Admin action — authorization (requiring an admin role/permission) is
-    an Authorization/RBAC concern layered on top of this route once the
-    Roles & Permissions submodule (mentioned in this phase's objective but
-    not yet detailed) is implemented; not enforced here."""
+    """Admin action, now guarded by the same require_permission pattern as
+    every comparable action in organizations_router.py — this previously
+    had no authentication dependency at all."""
     from uuid import UUID
 
     profile = await service.suspend(user_id=UUID(user_id), reason=reason)
     return DataResponse(data=_to_response(profile))
 
 
-@router.post("/users/{user_id}/reactivate", response_model=DataResponse[UserProfileResponse])
+@router.post(
+    "/users/{user_id}/reactivate",
+    response_model=DataResponse[UserProfileResponse],
+    dependencies=[Depends(require_permission("user", "manage_status"))],
+)
 async def reactivate_user(
     user_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: UserManagementService = Depends(deps.get_user_management_service),
 ) -> DataResponse[UserProfileResponse]:
     from uuid import UUID

@@ -9,7 +9,7 @@ from fastapi import Depends
 from app.identity.application.team_management import TeamService
 from app.identity.domain.team import TeamRole
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import require_permission
+from app.identity.presentation.authorization import assert_path_org_matches_claims, require_permission
 from app.identity.presentation.schemas import (
     AddTeamMemberRequest,
     CreateTeamRequest,
@@ -52,9 +52,11 @@ async def create_team(
 @router.get("/organizations/{org_id}/teams", response_model=DataResponse[list[TeamResponse]])
 async def list_teams(
     org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[list[TeamResponse]]:
-    teams = await service.list_teams_for_org(org_id=UUID(org_id))
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    teams = await service.list_teams_for_org(org_id=parsed_org_id)
     return DataResponse(data=[_to_response(t) for t in teams])
 
 
@@ -65,9 +67,12 @@ async def list_teams(
 async def update_team(
     team_id: str,
     request: UpdateTeamRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[TeamResponse]:
-    team = await service.update_team(team_id=UUID(team_id), name=request.name, description=request.description)
+    team = await service.update_team(
+        org_id=claims.org_id, team_id=UUID(team_id), name=request.name, description=request.description
+    )
     return DataResponse(data=_to_response(team))
 
 
@@ -78,9 +83,12 @@ async def update_team(
 async def set_team_parent(
     team_id: str,
     request: SetTeamParentRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[TeamResponse]:
-    team = await service.set_parent(team_id=UUID(team_id), parent_team_id=request.parent_team_id)
+    team = await service.set_parent(
+        org_id=claims.org_id, team_id=UUID(team_id), parent_team_id=request.parent_team_id
+    )
     return DataResponse(data=_to_response(team))
 
 
@@ -90,9 +98,10 @@ async def set_team_parent(
 )
 async def delete_team(
     team_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> None:
-    await service.delete_team(team_id=UUID(team_id))
+    await service.delete_team(org_id=claims.org_id, team_id=UUID(team_id))
 
 
 @router.post(
@@ -102,10 +111,11 @@ async def delete_team(
 async def add_team_member(
     team_id: str,
     request: AddTeamMemberRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[TeamMembershipResponse]:
     membership = await service.add_member(
-        team_id=UUID(team_id), user_id=request.user_id, team_role=TeamRole(request.team_role)
+        org_id=claims.org_id, team_id=UUID(team_id), user_id=request.user_id, team_role=TeamRole(request.team_role)
     )
     return DataResponse(data=_membership_response(membership))
 
@@ -113,9 +123,10 @@ async def add_team_member(
 @router.get("/teams/{team_id}/members", response_model=DataResponse[list[TeamMembershipResponse]])
 async def list_team_members(
     team_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[list[TeamMembershipResponse]]:
-    memberships = await service.list_members(team_id=UUID(team_id))
+    memberships = await service.list_members_for_org(org_id=claims.org_id, team_id=UUID(team_id))
     return DataResponse(data=[_membership_response(m) for m in memberships])
 
 
@@ -127,10 +138,11 @@ async def update_team_member_role(
     team_id: str,
     user_id: str,
     request: UpdateTeamMemberRoleRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> DataResponse[TeamMembershipResponse]:
     membership = await service.update_member_role(
-        team_id=UUID(team_id), user_id=UUID(user_id), team_role=TeamRole(request.team_role)
+        org_id=claims.org_id, team_id=UUID(team_id), user_id=UUID(user_id), team_role=TeamRole(request.team_role)
     )
     return DataResponse(data=_membership_response(membership))
 
@@ -142,6 +154,7 @@ async def update_team_member_role(
 async def remove_team_member(
     team_id: str,
     user_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TeamService = Depends(deps.get_team_service),
 ) -> None:
-    await service.remove_member(team_id=UUID(team_id), user_id=UUID(user_id))
+    await service.remove_member(org_id=claims.org_id, team_id=UUID(team_id), user_id=UUID(user_id))

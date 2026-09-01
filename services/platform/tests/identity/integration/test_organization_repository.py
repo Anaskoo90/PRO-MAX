@@ -42,3 +42,31 @@ async def test_update_persists_settings_change(uow) -> None:
 
     fetched = await uow.organizations.get_by_id(org.id)
     assert fetched.settings["ip_allowlist"] == ["10.0.0.0/8"]
+
+
+async def test_update_persists_slug_description_and_logo_url(uow) -> None:
+    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    await uow.organizations.add(org)
+    await uow.session.flush()
+
+    new_slug = f"acme-corp-{new_uuid7().hex[:8]}"
+    org.change_slug(new_slug)
+    org.update_description("A widget company")
+    org.update_logo_url("https://cdn.example.com/logo.png")
+    await uow.organizations.update(org)
+    await uow.session.flush()
+
+    fetched = await uow.organizations.get_by_id(org.id)
+    assert fetched.slug == new_slug
+    assert fetched.description == "A widget company"
+    assert fetched.logo_url == "https://cdn.example.com/logo.png"
+
+
+async def test_a_new_organization_has_no_description_or_logo_by_default(uow) -> None:
+    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    await uow.organizations.add(org)
+    await uow.session.flush()
+
+    fetched = await uow.organizations.get_by_id(org.id)
+    assert fetched.description is None
+    assert fetched.logo_url is None

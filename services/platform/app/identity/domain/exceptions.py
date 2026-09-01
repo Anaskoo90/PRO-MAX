@@ -124,6 +124,14 @@ class OrganizationNotActiveError(BusinessRuleViolationError):
         super().__init__("organization_not_active", f"Organization status '{status}' does not permit this action")
 
 
+# --- Organization Invitation -------------------------------------------
+
+
+class InvitationNotFoundError(EntityNotFoundError):
+    def __init__(self, invitation_id: object) -> None:
+        super().__init__("OrganizationInvitation", invitation_id)
+
+
 # --- Team ---------------------------------------------------------------
 
 

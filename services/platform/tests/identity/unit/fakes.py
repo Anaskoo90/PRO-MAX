@@ -7,7 +7,8 @@ are structural and any object with matching methods satisfies them.
 
 from __future__ import annotations
 
-from app.identity.domain.entities import User
+from app.identity.domain.entities import Session, User
+from app.identity.domain.organization import Organization
 from app.identity.domain.rbac import Permission, Role, UserRoleAssignment
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
@@ -19,11 +20,85 @@ class FakeUserRepository:
     async def get_by_id(self, user_id: EntityId) -> User | None:
         return self.users.get(user_id)
 
+    async def get_by_email(self, org_id: OrgId, email: str) -> User | None:
+        return next((u for u in self.users.values() if u.org_id == org_id and str(u.email) == email), None)
+
+    async def list_by_org(self, org_id: OrgId, *, offset: int = 0, limit: int = 50) -> list[User]:
+        matches = [u for u in self.users.values() if u.org_id == org_id]
+        return matches[offset : offset + limit]
+
+    async def search(
+        self, org_id: OrgId, *, query: str | None = None, status: str | None = None, sort=None,
+        offset: int = 0, limit: int = 50,
+    ):
+        matches = [u for u in self.users.values() if u.org_id == org_id]
+        if status is not None:
+            matches = [u for u in matches if u.status.value == status]
+        if query:
+            needle = query.lower()
+            matches = [
+                u for u in matches
+                if needle in u.display_name.lower() or needle in str(u.email).lower()
+            ]
+
+        for sort_field in reversed(sort or []):
+            matches.sort(key=lambda u: getattr(u, sort_field.field), reverse=sort_field.descending)
+        if not sort:
+            matches.sort(key=lambda u: u.display_name)
+
+        total = len(matches)
+        return matches[offset : offset + limit], total
+
     async def add(self, user: User) -> None:
         self.users[user.id] = user
 
     async def update(self, user: User) -> None:
         self.users[user.id] = user
+
+
+class FakeOrganizationRepository:
+    def __init__(self) -> None:
+        self.organizations: dict[EntityId, Organization] = {}
+
+    async def get_by_id(self, org_id: EntityId) -> Organization | None:
+        return self.organizations.get(org_id)
+
+    async def get_by_slug(self, slug: str) -> Organization | None:
+        return next((o for o in self.organizations.values() if o.slug == slug), None)
+
+    async def add(self, organization: Organization) -> None:
+        self.organizations[organization.id] = organization
+
+    async def update(self, organization: Organization) -> None:
+        self.organizations[organization.id] = organization
+
+
+class FakeSessionRepository:
+    def __init__(self) -> None:
+        self.sessions: dict[EntityId, Session] = {}
+
+    async def get_by_id(self, session_id: EntityId) -> Session | None:
+        return self.sessions.get(session_id)
+
+    async def get_by_refresh_token_hash(self, refresh_token_hash: str) -> Session | None:
+        return next((s for s in self.sessions.values() if s.refresh_token_hash == refresh_token_hash), None)
+
+    async def list_active_for_user(self, user_id: EntityId) -> list[Session]:
+        return [s for s in self.sessions.values() if s.user_id == user_id and s.is_active()]
+
+    async def add(self, session: Session) -> None:
+        self.sessions[session.id] = session
+
+    async def update(self, session: Session) -> None:
+        self.sessions[session.id] = session
+
+
+class FakeAuditRecordSink:
+    def __init__(self) -> None:
+        self.records: list = []
+
+    async def write(self, record) -> None:
+        self.records.append(record)
 
 
 class FakeRoleRepository:
@@ -106,12 +181,20 @@ class FakeUnitOfWork:
     test that touches one accidentally gets a clear AttributeError rather
     than silently succeeding against an empty fake."""
 
-    def __init__(self, *, users=None, roles=None, permissions=None, user_role_assignments=None, audit_logs=None) -> None:
+    def __init__(
+        self, *, users=None, organizations=None, sessions=None, roles=None, permissions=None,
+        user_role_assignments=None, audit_logs=None,
+    ) -> None:
         self.users = users or FakeUserRepository()
+        self.organizations = organizations or FakeOrganizationRepository()
+        self.sessions = sessions or FakeSessionRepository()
         self.roles = roles or FakeRoleRepository()
         self.permissions = permissions or FakePermissionRepository()
         self.user_role_assignments = user_role_assignments or FakeUserRoleAssignmentRepository()
         self.audit_logs = audit_logs or FakeAuditLogRepository()
+
+    async def flush(self) -> None:
+        return None
 
     async def __aenter__(self) -> "FakeUnitOfWork":
         return self

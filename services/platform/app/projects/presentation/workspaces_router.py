@@ -9,6 +9,7 @@ from fastapi import Depends
 from app.projects.application.workspace_management import WorkspaceService
 from app.projects.domain.entities import WorkspaceRole
 from app.projects.presentation import deps
+from app.identity.presentation.authorization import assert_path_org_matches_claims
 from app.projects.presentation.schemas import (
     AddWorkspaceMemberRequest,
     CreateWorkspaceRequest,
@@ -51,18 +52,21 @@ async def create_workspace(
 @router.get("/organizations/{org_id}/workspaces", response_model=DataResponse[list[WorkspaceResponse]])
 async def list_workspaces(
     org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[list[WorkspaceResponse]]:
-    workspaces = await service.list_for_org(org_id=UUID(org_id))
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    workspaces = await service.list_for_org(org_id=parsed_org_id)
     return DataResponse(data=[_to_response(w) for w in workspaces])
 
 
 @router.get("/workspaces/{workspace_id}", response_model=DataResponse[WorkspaceResponse])
 async def get_workspace(
     workspace_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceResponse]:
-    workspace = await service.get(workspace_id=UUID(workspace_id))
+    workspace = await service.get_for_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     return DataResponse(data=_to_response(workspace))
 
 
@@ -128,9 +132,10 @@ async def add_workspace_member(
 @router.get("/workspaces/{workspace_id}/members", response_model=DataResponse[list[WorkspaceMembershipResponse]])
 async def list_workspace_members(
     workspace_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[list[WorkspaceMembershipResponse]]:
-    memberships = await service.list_members(workspace_id=UUID(workspace_id))
+    memberships = await service.list_members_for_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     return DataResponse(data=[_membership_response(m) for m in memberships])
 
 

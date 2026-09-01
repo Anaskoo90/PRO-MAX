@@ -68,3 +68,38 @@ def test_ip_allowlist_and_denylist_read_from_settings() -> None:
 
     assert org.ip_allowlist() == ["10.0.0.0/8"]
     assert org.ip_denylist() == ["1.2.3.4/32"]
+
+
+def test_change_slug_updates_the_slug() -> None:
+    org = Organization.create(name="Acme", slug="acme", owner_user_id=_owner_id())
+
+    org.change_slug("acme-corp")
+
+    assert org.slug == "acme-corp"
+
+
+@pytest.mark.parametrize("bad_slug", ["", "-leading-dash", "UPPERCASE", "has space"])
+def test_change_slug_rejects_an_invalid_slug(bad_slug: str) -> None:
+    org = Organization.create(name="Acme", slug="acme", owner_user_id=_owner_id())
+
+    with pytest.raises(InvalidOrganizationSlugError):
+        org.change_slug(bad_slug)
+
+
+def test_update_description_sets_the_description() -> None:
+    org = Organization.create(name="Acme", slug="acme", owner_user_id=_owner_id())
+    assert org.description is None
+
+    org.update_description("A widget company")
+
+    assert org.description == "A widget company"
+
+
+def test_update_logo_url_sets_and_clears_the_logo() -> None:
+    org = Organization.create(name="Acme", slug="acme", owner_user_id=_owner_id())
+
+    org.update_logo_url("https://cdn.example.com/logo.png")
+    assert org.logo_url == "https://cdn.example.com/logo.png"
+
+    org.update_logo_url(None)
+    assert org.logo_url is None

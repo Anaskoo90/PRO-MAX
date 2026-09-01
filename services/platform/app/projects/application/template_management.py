@@ -100,6 +100,13 @@ class ProjectTemplateService:
                 raise ProjectTemplateNotFoundError(template_id)
             return template.to_export_dict()
 
+    async def export_template_for_org(self, *, org_id: OrgId, template_id: EntityId) -> dict[str, Any]:
+        async with self._uow_factory() as uow:
+            template = await uow.project_templates.get_by_id(template_id)
+            if template is None or template.org_id != org_id:
+                raise ProjectTemplateNotFoundError(template_id)
+            return template.to_export_dict()
+
     async def update_template(
         self, *, template_id: EntityId, actor_user_id: UserId, name: str | None, description: str | None
     ) -> ProjectTemplateDTO:

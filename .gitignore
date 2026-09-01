@@ -37,6 +37,7 @@ htmlcov/
 !.env.example
 discord_bot/.env
 services/platform/.env
+!apps/web/.env
 
 # --- Local runtime data ---
 .local-storage/
@@ -44,3 +45,12 @@ services/platform/.env
 # --- OS / editor cruft ---
 .DS_Store
 Thumbs.db
+node_modules
+
+# --- JS/TS build + tooling caches ---
+.turbo/
+*.tsbuildinfo
+# Environment files
+.env
+.env.*
+!.env.example

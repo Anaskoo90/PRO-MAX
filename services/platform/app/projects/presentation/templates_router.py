@@ -9,6 +9,7 @@ from fastapi import Depends
 from app.projects.application.template_management import ProjectTemplateService
 from app.projects.domain.entities import ProjectVisibility
 from app.projects.presentation import deps
+from app.identity.presentation.authorization import assert_path_org_matches_claims
 from app.projects.presentation.schemas import (
     CreateProjectTemplateRequest,
     ImportProjectTemplateRequest,
@@ -58,18 +59,21 @@ async def import_project_template(
 @router.get("/project-templates/{template_id}/export", response_model=DataResponse[ProjectTemplateExportResponse])
 async def export_project_template(
     template_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectTemplateService = Depends(deps.get_project_template_service),
 ) -> DataResponse[ProjectTemplateExportResponse]:
-    data = await service.export_template(template_id=UUID(template_id))
+    data = await service.export_template_for_org(org_id=claims.org_id, template_id=UUID(template_id))
     return DataResponse(data=ProjectTemplateExportResponse(data=data))
 
 
 @router.get("/organizations/{org_id}/project-templates", response_model=DataResponse[list[ProjectTemplateResponse]])
 async def list_project_templates(
     org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectTemplateService = Depends(deps.get_project_template_service),
 ) -> DataResponse[list[ProjectTemplateResponse]]:
-    templates = await service.list_for_org(org_id=UUID(org_id))
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    templates = await service.list_for_org(org_id=parsed_org_id)
     return DataResponse(data=[_to_response(t) for t in templates])
 
 

@@ -14,6 +14,7 @@ from app.identity.domain.entities import (
     User,
     UserStatus,
 )
+from app.identity.domain.invitation import InvitationStatus, OrganizationInvitation
 from app.identity.domain.organization import Organization, OrganizationStatus
 from app.identity.domain.rbac import Permission, Role, UserRoleAssignment
 from app.identity.domain.security_entities import TrustedDevice
@@ -23,6 +24,7 @@ from app.identity.infrastructure.orm_models import (
     AuditLogOrmModel,
     EmailVerificationTokenOrmModel,
     MfaFactorOrmModel,
+    OrganizationInvitationOrmModel,
     OrganizationOrmModel,
     PasswordHistoryOrmModel,
     PasswordResetTokenOrmModel,
@@ -177,6 +179,8 @@ def organization_to_domain(row: OrganizationOrmModel) -> Organization:
         owner_user_id=UserId(row.owner_user_id),
         status=OrganizationStatus(row.status),
         settings=row.settings,
+        description=row.description,
+        logo_url=row.logo_url,
         version=row.version,
     )
 
@@ -188,7 +192,44 @@ def organization_to_orm(entity: Organization, row: OrganizationOrmModel | None =
     row.owner_user_id = entity.owner_user_id
     row.status = entity.status.value
     row.settings = entity.settings
+    row.description = entity.description
+    row.logo_url = entity.logo_url
     row.version = entity.version
+    return row
+
+
+def organization_invitation_to_domain(row: OrganizationInvitationOrmModel) -> OrganizationInvitation:
+    return OrganizationInvitation(
+        id=EntityId(row.id),
+        org_id=OrgId(row.org_id),
+        email=Email(row.email),
+        role_id=EntityId(row.role_id),
+        invited_by_user_id=UserId(row.invited_by_user_id),
+        token_hash=row.token_hash,
+        status=InvitationStatus(row.status),
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+        accepted_at=row.accepted_at,
+        revoked_at=row.revoked_at,
+    )
+
+
+def organization_invitation_to_orm(
+    entity: OrganizationInvitation, row: OrganizationInvitationOrmModel | None = None
+) -> OrganizationInvitationOrmModel:
+    row = row or OrganizationInvitationOrmModel(
+        id=entity.id,
+        org_id=entity.org_id,
+        email=str(entity.email),
+        role_id=entity.role_id,
+        invited_by_user_id=entity.invited_by_user_id,
+        token_hash=entity.token_hash,
+        created_at=entity.created_at,
+    )
+    row.status = entity.status.value
+    row.expires_at = entity.expires_at
+    row.accepted_at = entity.accepted_at
+    row.revoked_at = entity.revoked_at
     return row
 
 

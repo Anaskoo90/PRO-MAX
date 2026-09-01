@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.domain.entities import (
@@ -22,8 +22,17 @@ from app.identity.infrastructure.orm_models import (
     SessionOrmModel,
     UserOrmModel,
 )
+from app.platform_core.api.sorting import SortField
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.shared_kernel.types import EntityId, OrgId
+
+# Only fields with a real, indexed-or-plain column behind them — same
+# discipline as ticket_system's _SORTABLE_COLUMNS (Phase 2A).
+_USER_SORTABLE_COLUMNS = {
+    "created_at": UserOrmModel.created_at,
+    "display_name": UserOrmModel.display_name,
+    "email": UserOrmModel.email,
+}
 
 
 class SqlAlchemyUserRepository:
@@ -53,6 +62,37 @@ class SqlAlchemyUserRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [mappers.user_to_domain(r) for r in rows]
+
+    async def search(
+        self,
+        org_id: OrgId,
+        *,
+        query: str | None = None,
+        status: str | None = None,
+        sort: list[SortField] | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[User], int]:
+        filters = [UserOrmModel.org_id == org_id, UserOrmModel.deleted_at.is_(None)]
+        if status is not None:
+            filters.append(UserOrmModel.status == status)
+        if query:
+            pattern = f"%{query}%"
+            filters.append(or_(UserOrmModel.display_name.ilike(pattern), UserOrmModel.email.ilike(pattern)))
+
+        count_stmt = select(func.count()).select_from(UserOrmModel).where(*filters)
+        total = (await self._session.execute(count_stmt)).scalar_one()
+
+        stmt = select(UserOrmModel).where(*filters)
+        for sort_field in sort or []:
+            column = _USER_SORTABLE_COLUMNS[sort_field.field]
+            stmt = stmt.order_by(column.desc() if sort_field.descending else column.asc())
+        if not sort:
+            stmt = stmt.order_by(UserOrmModel.display_name.asc())
+        stmt = stmt.offset(offset).limit(limit)
+
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [mappers.user_to_domain(r) for r in rows], total
 
     async def add(self, user: User) -> None:
         self._session.add(mappers.user_to_orm(user))

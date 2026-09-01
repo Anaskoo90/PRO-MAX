@@ -1,0 +1,123 @@
+.section {
+  margin-bottom: 32px;
+}
+
+.section h2 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.matrixScroll {
+  overflow-x: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix th,
+.matrix td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.matrix thead th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  background: var(--color-bg);
+}
+
+.groupRow th {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.matrixCell {
+  text-align: center;
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.memberPicker {
+  position: relative;
+  max-width: 360px;
+}
+
+.memberPicker input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.memberResults {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.memberResults button {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.memberResults button:hover {
+  background: var(--color-bg);
+}
+
+.memberRoles {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  max-width: 480px;
+}
+
+.roleToggleList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roleToggleList label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}

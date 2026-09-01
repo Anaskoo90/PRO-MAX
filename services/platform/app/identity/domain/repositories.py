@@ -14,10 +14,12 @@ from app.identity.domain.entities import (
     Session,
     User,
 )
+from app.identity.domain.invitation import OrganizationInvitation
 from app.identity.domain.organization import Organization
 from app.identity.domain.rbac import Permission, Role, UserRoleAssignment
 from app.identity.domain.security_entities import TrustedDevice
 from app.identity.domain.team import Team, TeamMembership
+from app.platform_core.api.sorting import SortField
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 
@@ -25,6 +27,20 @@ class UserRepository(Protocol):
     async def get_by_id(self, user_id: EntityId) -> User | None: ...
     async def get_by_email(self, org_id: OrgId, email: str) -> User | None: ...
     async def list_by_org(self, org_id: OrgId, *, offset: int = 0, limit: int = 50) -> list[User]: ...
+    async def search(
+        self,
+        org_id: OrgId,
+        *,
+        query: str | None = None,
+        status: str | None = None,
+        sort: list[SortField] | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[User], int]:
+        """Dashboard-facing member listing: free-text search (email or
+        display_name), status filter, sort, and the total match count
+        needed for pagination UI. Returns (page_of_users, total_matching_count)."""
+        ...
     async def add(self, user: User) -> None: ...
     async def update(self, user: User) -> None: ...
 
@@ -69,6 +85,15 @@ class OrganizationRepository(Protocol):
     async def get_by_slug(self, slug: str) -> Organization | None: ...
     async def add(self, organization: Organization) -> None: ...
     async def update(self, organization: Organization) -> None: ...
+
+
+class OrganizationInvitationRepository(Protocol):
+    async def get_by_id(self, invitation_id: EntityId) -> OrganizationInvitation | None: ...
+    async def get_by_token_hash(self, token_hash: str) -> OrganizationInvitation | None: ...
+    async def get_pending_for_email(self, org_id: OrgId, email: str) -> OrganizationInvitation | None: ...
+    async def list_pending_for_org(self, org_id: OrgId, *, offset: int = 0, limit: int = 50) -> list[OrganizationInvitation]: ...
+    async def add(self, invitation: OrganizationInvitation) -> None: ...
+    async def update(self, invitation: OrganizationInvitation) -> None: ...
 
 
 class TeamRepository(Protocol):

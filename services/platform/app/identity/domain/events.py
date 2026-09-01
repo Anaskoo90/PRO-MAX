@@ -95,6 +95,28 @@ class OrganizationStatusChanged(DomainEvent):
     status: str
 
 
+# --- Organization Invitation --------------------------------------------
+
+
+class OrganizationInvitationCreated(DomainEvent):
+    event_type = "identity.organization_invitation_created"
+    org_id: UUID
+    email: str
+    role_id: UUID
+    invited_by_user_id: UUID
+
+
+class OrganizationInvitationAccepted(DomainEvent):
+    event_type = "identity.organization_invitation_accepted"
+    org_id: UUID
+    email: str
+
+
+class OrganizationInvitationRevoked(DomainEvent):
+    event_type = "identity.organization_invitation_revoked"
+    org_id: UUID
+
+
 # --- Team ---------------------------------------------------------------
 
 

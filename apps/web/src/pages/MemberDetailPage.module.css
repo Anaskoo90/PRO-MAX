@@ -1,0 +1,61 @@
+.backLink {
+  display: inline-block;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 480px;
+}
+
+.detailList {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.detailList dt {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.detailList dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+.roleList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.roleList li {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-border);
+  font-size: 12px;
+}
+
+.noRoles {
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.hint {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}

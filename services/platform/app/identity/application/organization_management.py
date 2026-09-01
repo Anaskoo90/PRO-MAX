@@ -18,19 +18,23 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
 from app.identity.domain.exceptions import (
     OrganizationNotFoundError,
     OrganizationSlugTakenError,
+    UserNotFoundError,
     WeakPasswordError,
 )
 from app.identity.domain.organization import Organization
 from app.identity.domain.rbac import UserRoleAssignment
 from app.identity.domain.value_objects import Email
+from app.platform_core.api.sorting import SortField
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
+from app.platform_core.shared_kernel.dtos import PagedResult
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
 
@@ -43,12 +47,14 @@ class OrganizationDTO:
     owner_user_id: UUID
     status: str
     settings: dict[str, Any]
+    description: str | None
+    logo_url: str | None
 
 
 def _to_dto(org: Organization) -> OrganizationDTO:
     return OrganizationDTO(
         id=org.id, name=org.name, slug=org.slug, owner_user_id=org.owner_user_id, status=org.status.value,
-        settings=org.settings,
+        settings=org.settings, description=org.description, logo_url=org.logo_url,
     )
 
 
@@ -128,18 +134,38 @@ class OrganizationManagementService:
                 raise OrganizationNotFoundError(org_id)
             return _to_dto(org)
 
-    async def update(self, *, org_id: EntityId, name: str | None, actor_user_id: UUID) -> OrganizationDTO:
+    async def update(
+        self, *, org_id: EntityId, name: str | None, actor_user_id: UUID,
+        slug: str | None = None, description: str | None = None, logo_url: str | None = None,
+    ) -> OrganizationDTO:
         async with self._uow_factory() as uow:
             org = await uow.organizations.get_by_id(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
+
+            changed_fields: list[str] = []
             if name is not None:
                 org.rename(name)
+                changed_fields.append("name")
+            if slug is not None and slug != org.slug:
+                existing = await uow.organizations.get_by_slug(slug)
+                if existing is not None and existing.id != org.id:
+                    raise OrganizationSlugTakenError(slug)
+                org.change_slug(slug)
+                changed_fields.append("slug")
+            if description is not None:
+                org.update_description(description)
+                changed_fields.append("description")
+            if logo_url is not None:
+                org.update_logo_url(logo_url)
+                changed_fields.append("logo_url")
+
             await uow.organizations.update(org)
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action="organization_updated",
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
+                    metadata={"changed_fields": changed_fields},
                 )
             )
             await uow.commit()
@@ -193,6 +219,32 @@ class OrganizationManagementService:
     async def list_members(self, *, org_id: OrgId, offset: int = 0, limit: int = 50):
         async with self._uow_factory() as uow:
             return await uow.users.list_by_org(org_id, offset=offset, limit=limit)
+
+    async def search_members(
+        self, *, org_id: OrgId, query: str | None = None, status: str | None = None,
+        sort: list[SortField] | None = None, page: int = 1, page_size: int = 50,
+    ) -> PagedResult[UserProfileDTO]:
+        """The dashboard's member-listing endpoint — same data as
+        list_members, plus free-text search, a status filter, sort, and a
+        real total count for pagination UI (list_members has none of
+        those; kept as-is rather than folded into this, same reasoning as
+        Ticket System's list_for_org/search_for_org split in Phase 2A)."""
+        async with self._uow_factory() as uow:
+            users, total = await uow.users.search(
+                org_id, query=query, status=status, sort=sort, offset=(page - 1) * page_size, limit=page_size,
+            )
+            return PagedResult(items=[user_to_profile_dto(u) for u in users], total=total, page=page, page_size=page_size)
+
+    async def get_member(self, *, org_id: OrgId, user_id: EntityId) -> UserProfileDTO:
+        """Member-detail lookup, scoped to the requesting admin's own org —
+        a member id that resolves to a *different* org's user is treated
+        as not-found rather than 403, so this endpoint never confirms or
+        denies another organization's user IDs exist."""
+        async with self._uow_factory() as uow:
+            user = await uow.users.get_by_id(user_id)
+            if user is None or user.org_id != org_id:
+                raise UserNotFoundError(user_id)
+            return user_to_profile_dto(user)
 
     async def _set_status(self, *, org_id: EntityId, action: str, transition, actor_user_id: UUID) -> OrganizationDTO:
         async with self._uow_factory() as uow:

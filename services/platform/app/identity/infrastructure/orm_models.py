@@ -170,11 +170,40 @@ class OrganizationOrmModel(IdentityBase):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class OrganizationInvitationOrmModel(IdentityBase):
+    __tablename__ = "organization_invitations"
+    __table_args__ = (
+        Index("ix_organization_invitations_org_id", "org_id"),
+        Index("ix_organization_invitations_email", "email"),
+        {"schema": "identity"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.roles.id"), nullable=False
+    )
+    invited_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class TeamOrmModel(IdentityBase):

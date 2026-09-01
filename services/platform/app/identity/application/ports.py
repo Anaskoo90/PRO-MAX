@@ -17,6 +17,7 @@ from app.identity.domain.repositories import (
     AuditLogRepository,
     EmailVerificationTokenRepository,
     MfaFactorRepository,
+    OrganizationInvitationRepository,
     OrganizationRepository,
     PasswordHistoryRepository,
     PasswordResetTokenRepository,
@@ -44,6 +45,7 @@ class IdentityUnitOfWorkPort(Protocol):
     password_reset_tokens: PasswordResetTokenRepository
     password_history: PasswordHistoryRepository
     organizations: OrganizationRepository
+    organization_invitations: OrganizationInvitationRepository
     teams: TeamRepository
     team_memberships: TeamMembershipRepository
     roles: RoleRepository

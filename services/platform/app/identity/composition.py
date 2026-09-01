@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.identity.application.authentication import AuthenticationService, AuthPolicy, OAuth2LoginService
 from app.identity.application.email_verification import EmailVerificationService
 from app.identity.application.mfa import MfaService
+from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.password_management import PasswordManagementService
 from app.identity.application.rbac_engine import PermissionEvaluator, PolicyEvaluator, RoleResolutionService
@@ -43,6 +44,7 @@ from app.identity.presentation import (
     auth_router,
     deps,
     email_verification_router,
+    invitations_router,
     mfa_router,
     organizations_router,
     password_router,
@@ -95,7 +97,7 @@ class IdentityModule:
 
         self.dispatcher = EventDispatcher()
         self.password_hasher = PasswordHashingService()
-        self.token_service = JwtTokenService(signing_key="dev-only-change-me")  # see SecretProvider
+        self.token_service = JwtTokenService(signing_key=settings.jwt_signing_key)
         self.encryption = FieldEncryptionService(FieldEncryptionService.generate_key())
         self.audit_logger = AuditLogger(_LoggingAuditRecordSink())
         self.notification_dispatcher = NotificationDispatcher()  # no channel providers wired yet
@@ -170,6 +172,12 @@ class IdentityModule:
         self.organization_management_service = OrganizationManagementService(
             uow_factory=uow_factory, password_hasher=self.password_hasher, dispatcher=self.dispatcher,
         )
+        self.organization_invitation_service = OrganizationInvitationService(
+            uow_factory=uow_factory,
+            password_hasher=self.password_hasher,
+            notification_dispatcher=self.notification_dispatcher,
+            dispatcher=self.dispatcher,
+        )
         self.team_service = TeamService(uow_factory=uow_factory, dispatcher=self.dispatcher)
 
         # Event-driven wiring — every subscription decouples one submodule
@@ -204,6 +212,7 @@ class IdentityModule:
         container.register_instance(MfaService, self.mfa_service)
         container.register_instance(JwtTokenService, self.token_service)
         container.register_instance(OrganizationManagementService, self.organization_management_service)
+        container.register_instance(OrganizationInvitationService, self.organization_invitation_service)
         container.register_instance(TeamService, self.team_service)
         container.register_instance(RoleService, self.role_service)
         container.register_instance(PermissionCatalogService, self.permission_catalog_service)
@@ -219,6 +228,7 @@ class IdentityModule:
         app.include_router(password_router.router)
         app.include_router(mfa_router.router)
         app.include_router(organizations_router.router)
+        app.include_router(invitations_router.router)
         app.include_router(teams_router.router)
         app.include_router(rbac_router.router)
         app.include_router(security_router.router)
@@ -231,6 +241,7 @@ class IdentityModule:
         app.dependency_overrides[deps.get_password_management_service] = lambda: self.password_management_service
         app.dependency_overrides[deps.get_mfa_service] = lambda: self.mfa_service
         app.dependency_overrides[deps.get_organization_management_service] = lambda: self.organization_management_service
+        app.dependency_overrides[deps.get_organization_invitation_service] = lambda: self.organization_invitation_service
         app.dependency_overrides[deps.get_team_service] = lambda: self.team_service
         app.dependency_overrides[deps.get_role_service] = lambda: self.role_service
         app.dependency_overrides[deps.get_permission_catalog_service] = lambda: self.permission_catalog_service

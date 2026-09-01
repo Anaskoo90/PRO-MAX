@@ -30,6 +30,14 @@ class DiscordBotSettings(BaseSettings):
     discord_guild_id: int | None = None
     api_url: str = "http://127.0.0.1:8000"
 
+    # Shared secret sent as X-GuildDesk-Bot-Secret on every call to the
+    # backend's bot-facing Discord Integration endpoints — must match the
+    # backend's DiscordIntegrationSettings.discord_bot_service_secret.
+    # Defaulted to the same dev placeholder the backend defaults to, so a
+    # fresh dev setup works out of the box; override both sides for a real
+    # deployment.
+    platform_service_secret: str = "dev-only-change-me"
+
 
 @lru_cache
 def get_settings() -> DiscordBotSettings:

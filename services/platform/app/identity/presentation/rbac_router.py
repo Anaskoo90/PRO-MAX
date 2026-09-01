@@ -8,11 +8,12 @@ from fastapi import Depends
 
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import require_permission
+from app.identity.presentation.authorization import assert_path_org_matches_claims, require_permission
 from app.identity.presentation.schemas import (
     AssignRoleRequest,
     CreateRoleRequest,
     GrantPermissionRequest,
+    PermissionMatrixResponse,
     PermissionResponse,
     RoleResponse,
     SetRoleParentRequest,
@@ -42,12 +43,56 @@ async def list_permission_catalog(
     )
 
 
-@router.get("/organizations/{org_id}/roles", response_model=DataResponse[list[RoleResponse]])
+@router.get(
+    "/organizations/{org_id}/roles", response_model=DataResponse[list[RoleResponse]],
+    dependencies=[Depends(require_permission("role", "read"))],
+)
 async def list_roles(
     org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: RoleService = Depends(deps.get_role_service),
 ) -> DataResponse[list[RoleResponse]]:
-    roles = await service.list_roles_for_org(org_id=UUID(org_id))
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    roles = await service.list_roles_for_org(org_id=parsed_org_id)
+    return DataResponse(data=[_role_response(r) for r in roles])
+
+
+@router.get(
+    "/organizations/{org_id}/permission-matrix", response_model=DataResponse[PermissionMatrixResponse],
+    dependencies=[Depends(require_permission("role", "read"))],
+)
+async def get_permission_matrix(
+    org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    role_service: RoleService = Depends(deps.get_role_service),
+    permission_catalog: PermissionCatalogService = Depends(deps.get_permission_catalog_service),
+) -> DataResponse[PermissionMatrixResponse]:
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    roles = await role_service.list_roles_for_org(org_id=parsed_org_id)
+    permissions = await permission_catalog.list_catalog()
+    return DataResponse(
+        data=PermissionMatrixResponse(
+            permissions=[
+                PermissionResponse(id=p.id, resource=p.resource, action=p.action, description=p.description)
+                for p in permissions
+            ],
+            roles=[_role_response(r) for r in roles],
+        )
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/members/{user_id}/roles", response_model=DataResponse[list[RoleResponse]],
+    dependencies=[Depends(require_permission("role", "read"))],
+)
+async def list_roles_for_member(
+    org_id: str,
+    user_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: RoleService = Depends(deps.get_role_service),
+) -> DataResponse[list[RoleResponse]]:
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    roles = await service.list_roles_for_user(user_id=UUID(user_id), org_id=parsed_org_id)
     return DataResponse(data=[_role_response(r) for r in roles])
 
 

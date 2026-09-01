@@ -46,6 +46,7 @@ async def login(
 ) -> TokenResponse | MfaChallengeResponse:
     result = await service.login(
         org_id=request.org_id,
+        org_slug=request.org_slug,
         email=request.email,
         password=request.password,
         ip_address="0.0.0.0",  # replaced by the real client IP once behind a reverse proxy config

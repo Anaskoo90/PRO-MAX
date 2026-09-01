@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import Depends
 
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import require_permission
+from app.identity.presentation.authorization import assert_path_org_matches_claims, require_permission
 from app.identity.presentation.schemas import (
     OrganizationResponse,
     RegisterOrganizationRequest,
@@ -17,16 +19,30 @@ from app.identity.presentation.schemas import (
 )
 from app.platform_core.api.pagination import PageParams, page_params
 from app.platform_core.api.responses import DataResponse, PagedResponse
+from app.platform_core.api.sorting import UnsortableFieldError, parse_sort
 from app.platform_core.api.versioning import versioned_router
+from app.platform_core.errors.domain_exceptions import BusinessRuleViolationError
 from app.platform_core.security.token import TokenClaims
 
 router = versioned_router(version="v1", tags=["organizations"])
+
+# The only fields OrganizationManagementService.search_members's underlying
+# repository query knows how to sort on (see infrastructure/repositories.py's
+# _USER_SORTABLE_COLUMNS) — kept in lockstep with that set.
+_MEMBER_SORT_FIELDS = {"created_at", "display_name", "email"}
 
 
 def _to_response(dto) -> OrganizationResponse:
     return OrganizationResponse(
         id=dto.id, name=dto.name, slug=dto.slug, owner_user_id=dto.owner_user_id, status=dto.status,
-        settings=dto.settings,
+        settings=dto.settings, description=dto.description, logo_url=dto.logo_url,
+    )
+
+
+def _to_member_response(dto) -> UserProfileResponse:
+    return UserProfileResponse(
+        id=dto.id, org_id=dto.org_id, email=dto.email, display_name=dto.display_name, status=dto.status,
+        mfa_enabled=dto.mfa_enabled, avatar_storage_key=dto.avatar_storage_key, preferences=dto.preferences,
     )
 
 
@@ -51,11 +67,11 @@ async def register_organization(
 @router.get("/organizations/{org_id}", response_model=DataResponse[OrganizationResponse])
 async def get_organization(
     org_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
-    org = await service.get(org_id=UUID(org_id))
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    org = await service.get(org_id=parsed_org_id)
     return DataResponse(data=_to_response(org))
 
 
@@ -70,9 +86,11 @@ async def update_organization(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
-    org = await service.update(org_id=UUID(org_id), name=request.name, actor_user_id=claims.subject_user_id)
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    org = await service.update(
+        org_id=parsed_org_id, name=request.name, actor_user_id=claims.subject_user_id,
+        slug=request.slug, description=request.description, logo_url=request.logo_url,
+    )
     return DataResponse(data=_to_response(org))
 
 
@@ -87,9 +105,8 @@ async def update_organization_settings(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
-    org = await service.update_settings(org_id=UUID(org_id), patch=request.settings, actor_user_id=claims.subject_user_id)
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    org = await service.update_settings(org_id=parsed_org_id, patch=request.settings, actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(org))
 
 
@@ -104,36 +121,56 @@ async def transfer_ownership(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
     org = await service.transfer_ownership(
-        org_id=UUID(org_id), new_owner_user_id=request.new_owner_user_id, actor_user_id=claims.subject_user_id
+        org_id=parsed_org_id, new_owner_user_id=request.new_owner_user_id, actor_user_id=claims.subject_user_id
     )
     return DataResponse(data=_to_response(org))
 
 
 @router.get(
     "/organizations/{org_id}/members",
-    response_model=DataResponse[list[UserProfileResponse]],
+    response_model=PagedResponse[UserProfileResponse],
     dependencies=[Depends(require_permission("user", "read"))],
 )
 async def list_organization_members(
     org_id: str,
     page: PageParams = Depends(page_params),
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
-) -> DataResponse[list[UserProfileResponse]]:
-    from uuid import UUID
+) -> PagedResponse[UserProfileResponse]:
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    try:
+        sort_fields = parse_sort(sort, _MEMBER_SORT_FIELDS)
+    except UnsortableFieldError as exc:
+        raise BusinessRuleViolationError("unsortable_field", str(exc)) from exc
 
-    members = await service.list_members(org_id=UUID(org_id), offset=page.offset, limit=page.limit)
-    return DataResponse(
-        data=[
-            UserProfileResponse(
-                id=m.id, org_id=m.org_id, email=str(m.email), display_name=m.display_name, status=m.status.value,
-                mfa_enabled=m.mfa_enabled, avatar_storage_key=m.avatar_storage_key, preferences=m.preferences,
-            )
-            for m in members
-        ]
+    result = await service.search_members(
+        org_id=parsed_org_id, query=q, status=status, sort=sort_fields, page=page.page, page_size=page.page_size,
     )
+    return PagedResponse(
+        data=[_to_member_response(dto) for dto in result.items], page=result.page, page_size=result.page_size,
+        total=result.total, total_pages=result.total_pages,
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/members/{user_id}",
+    response_model=DataResponse[UserProfileResponse],
+    dependencies=[Depends(require_permission("user", "read"))],
+)
+async def get_organization_member(
+    org_id: str,
+    user_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: OrganizationManagementService = Depends(deps.get_organization_management_service),
+) -> DataResponse[UserProfileResponse]:
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    member = await service.get_member(org_id=parsed_org_id, user_id=UUID(user_id))
+    return DataResponse(data=_to_member_response(member))
 
 
 @router.post(
@@ -146,9 +183,8 @@ async def suspend_organization(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
-    org = await service.suspend(org_id=UUID(org_id), actor_user_id=claims.subject_user_id)
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    org = await service.suspend(org_id=parsed_org_id, actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(org))
 
 
@@ -162,7 +198,6 @@ async def reactivate_organization(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationManagementService = Depends(deps.get_organization_management_service),
 ) -> DataResponse[OrganizationResponse]:
-    from uuid import UUID
-
-    org = await service.reactivate(org_id=UUID(org_id), actor_user_id=claims.subject_user_id)
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    org = await service.reactivate(org_id=parsed_org_id, actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(org))

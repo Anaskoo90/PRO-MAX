@@ -6,7 +6,7 @@ from app.platform_core.shared_kernel.utils import new_uuid7
 
 
 def test_issued_token_verifies_and_round_trips_claims() -> None:
-    service = JwtTokenService(signing_key="test-signing-key")
+    service = JwtTokenService(signing_key="a" * 32)
     user_id = new_uuid7()
     org_id = new_uuid7()
 
@@ -19,8 +19,8 @@ def test_issued_token_verifies_and_round_trips_claims() -> None:
 
 
 def test_token_signed_with_a_different_key_fails_verification() -> None:
-    issuer = JwtTokenService(signing_key="key-a")
-    verifier = JwtTokenService(signing_key="key-b")
+    issuer = JwtTokenService(signing_key="a" * 32)
+    verifier = JwtTokenService(signing_key="b" * 32)
     token = issuer.issue_access_token(user_id=new_uuid7(), org_id=new_uuid7(), scopes=[])
 
     with pytest.raises(jwt.InvalidSignatureError):
@@ -28,7 +28,7 @@ def test_token_signed_with_a_different_key_fails_verification() -> None:
 
 
 def test_tampered_payload_fails_verification() -> None:
-    service = JwtTokenService(signing_key="test-signing-key")
+    service = JwtTokenService(signing_key="a" * 32)
     token = service.issue_access_token(user_id=new_uuid7(), org_id=new_uuid7(), scopes=[])
 
     header, payload, signature = token.split(".")
@@ -41,7 +41,7 @@ def test_tampered_payload_fails_verification() -> None:
 def test_expired_token_fails_verification() -> None:
     from datetime import timedelta
 
-    service = JwtTokenService(signing_key="test-signing-key")
+    service = JwtTokenService(signing_key="a" * 32)
     token = service.issue_access_token(
         user_id=new_uuid7(), org_id=new_uuid7(), scopes=[], ttl=timedelta(seconds=-1)
     )

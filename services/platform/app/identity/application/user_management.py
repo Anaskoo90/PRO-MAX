@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.identity.application.dtos import UserProfileDTO
+from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.entities import PasswordHistoryEntry, User
 from app.identity.domain.exceptions import (
     EmailAlreadyRegisteredError,
@@ -29,19 +29,6 @@ from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, 
 from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.platform_core.storage.interfaces import FileStorageProvider
 from app.platform_core.storage.upload_contracts import UploadRequest
-
-
-def _to_profile_dto(user: User) -> UserProfileDTO:
-    return UserProfileDTO(
-        id=user.id,
-        org_id=user.org_id,
-        email=str(user.email),
-        display_name=user.display_name,
-        status=user.status.value,
-        mfa_enabled=user.mfa_enabled,
-        avatar_storage_key=user.avatar_storage_key,
-        preferences=user.preferences,
-    )
 
 
 class UserManagementService:
@@ -96,14 +83,14 @@ class UserManagementService:
             await self._audit_logger.record(
                 org_id=org_id, actor_id=user.id, action="user_registered", resource_type="user", resource_id=str(user.id)
             )
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def get_profile(self, *, user_id: EntityId) -> UserProfileDTO:
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def update_profile(self, *, user_id: EntityId, display_name: str | None) -> UserProfileDTO:
         async with self._uow_factory() as uow:
@@ -113,7 +100,7 @@ class UserManagementService:
             user.update_profile(display_name=display_name)
             await uow.users.update(user)
             await uow.commit()
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def update_avatar(self, *, user_id: EntityId, content: bytes, content_type: str, filename: str) -> UserProfileDTO:
         UploadRequest(filename=filename, content_type=content_type, size_bytes=len(content))  # raises on invalid upload
@@ -128,7 +115,7 @@ class UserManagementService:
             user.update_avatar(storage_key)
             await uow.users.update(user)
             await uow.commit()
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def update_preferences(self, *, user_id: EntityId, preferences: dict[str, Any]) -> UserProfileDTO:
         async with self._uow_factory() as uow:
@@ -138,7 +125,7 @@ class UserManagementService:
             user.update_preferences(preferences)
             await uow.users.update(user)
             await uow.commit()
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def suspend(self, *, user_id: EntityId, reason: str) -> UserProfileDTO:
         async with self._uow_factory() as uow:
@@ -154,7 +141,7 @@ class UserManagementService:
                 org_id=user.org_id, actor_id=None, action="user_suspended", resource_type="user",
                 resource_id=str(user.id), metadata={"reason": reason},
             )
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def reactivate(self, *, user_id: EntityId) -> UserProfileDTO:
         async with self._uow_factory() as uow:
@@ -166,7 +153,7 @@ class UserManagementService:
             events = user.pull_domain_events()
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
-            return _to_profile_dto(user)
+            return user_to_profile_dto(user)
 
     async def deactivate_account(self, *, user_id: EntityId) -> None:
         """User-initiated account closure: status -> deactivated. Distinct

@@ -32,3 +32,9 @@ tasks:
     dir: services/platform
     cmds:
       - uv run uvicorn app.main:app --reload --port 8000
+
+  dev:web:
+    desc: Run the web dashboard locally
+    dir: apps/web
+    cmds:
+      - pnpm dev

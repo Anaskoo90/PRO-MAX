@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.identity.application.authentication import AuthenticationService, OAuth2LoginService
 from app.identity.application.email_verification import EmailVerificationService
 from app.identity.application.mfa import MfaService
+from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.password_management import PasswordManagementService
 from app.identity.application.rbac_engine import PermissionEvaluator
@@ -67,6 +68,10 @@ def get_mfa_service() -> MfaService:
 
 def get_organization_management_service() -> OrganizationManagementService:
     raise NotImplementedError("OrganizationManagementService dependency not wired")
+
+
+def get_organization_invitation_service() -> OrganizationInvitationService:
+    raise NotImplementedError("OrganizationInvitationService dependency not wired")
 
 
 def get_team_service() -> TeamService:
