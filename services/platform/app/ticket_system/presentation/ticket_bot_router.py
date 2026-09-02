@@ -36,7 +36,7 @@ def _to_response(dto) -> TicketResponse:
         opener_discord_user_id=dto.opener_discord_user_id, opener_user_id=dto.opener_user_id,
         claimed_by_discord_user_id=dto.claimed_by_discord_user_id, claimed_by_user_id=dto.claimed_by_user_id,
         closed_at=dto.closed_at, closed_by_discord_user_id=dto.closed_by_discord_user_id,
-        closed_by_user_id=dto.closed_by_user_id,
+        closed_by_user_id=dto.closed_by_user_id, created_at=dto.created_at,
     )
 
 
