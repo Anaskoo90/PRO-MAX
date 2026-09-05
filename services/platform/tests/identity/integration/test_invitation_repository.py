@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from app.identity.domain.entities import User, UserStatus
@@ -17,7 +19,7 @@ async def _seed_org_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
     # OrganizationManagementService.register_organization_with_owner: these
     # ORM models have no relationship() cascades, so SQLAlchemy won't
     # auto-order cross-table INSERTs within a single flush.
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 
@@ -28,7 +30,7 @@ async def _seed_org_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
     inviter = User(
         id=EntityId(new_uuid7()),
         org_id=OrgId(org.id),
-        email=Email(f"inviter-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"inviter-{uuid.uuid4().hex[:12]}@example.com"),
         password_hash=PasswordHashingService().hash("Correct-Horse-Battery-9"),
         status=UserStatus.ACTIVE,
         display_name="Inviter",
@@ -42,7 +44,7 @@ async def test_add_then_get_by_id_round_trips(uow) -> None:
     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
     invitation = OrganizationInvitation.create(
         org_id=org_id,
-        email=Email(f"invitee-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"invitee-{uuid.uuid4().hex[:12]}@example.com"),
         role_id=role_id,
         invited_by_user_id=inviter_id,
         token_hash="hashed-token",
@@ -61,7 +63,7 @@ async def test_get_by_token_hash_finds_the_invitation(uow) -> None:
     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
     invitation = OrganizationInvitation.create(
         org_id=org_id,
-        email=Email(f"invitee-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"invitee-{uuid.uuid4().hex[:12]}@example.com"),
         role_id=role_id,
         invited_by_user_id=inviter_id,
         token_hash="a-unique-token-hash",
@@ -77,7 +79,7 @@ async def test_get_by_token_hash_finds_the_invitation(uow) -> None:
 
 async def test_get_pending_for_email_ignores_accepted_invitations(uow) -> None:
     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
+    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
     invitation = OrganizationInvitation.create(
         org_id=org_id, email=Email(email), role_id=role_id, invited_by_user_id=inviter_id, token_hash="tok-1"
     )
@@ -97,14 +99,14 @@ async def test_list_pending_for_org_excludes_revoked(uow) -> None:
     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
     pending = OrganizationInvitation.create(
         org_id=org_id,
-        email=Email(f"pending-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"pending-{uuid.uuid4().hex[:12]}@example.com"),
         role_id=role_id,
         invited_by_user_id=inviter_id,
         token_hash="tok-pending",
     )
     revoked = OrganizationInvitation.create(
         org_id=org_id,
-        email=Email(f"revoked-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"revoked-{uuid.uuid4().hex[:12]}@example.com"),
         role_id=role_id,
         invited_by_user_id=inviter_id,
         token_hash="tok-revoked",

@@ -65,20 +65,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ status: "anonymous", user: null });
       return;
     }
-    setAccessToken(stored.accessToken);
-    setRefreshToken(stored.refreshToken);
-    api.auth
-      .getMyProfile()
-      .then((user) => setState({ status: "authenticated", user }))
-      .catch(() => {
-        // The stored access token is no longer valid (expired, revoked) — a
-        // refresh-on-startup flow is a later-phase concern, not part of
-        // Phase 2A's foundation, so this just falls back to signed-out.
+
+    let cancelled = false;
+
+    (async () => {
+      setAccessToken(stored.accessToken);
+      setRefreshToken(stored.refreshToken);
+
+      try {
+        const user = await api.auth.getMyProfile();
+        if (!cancelled) setState({ status: "authenticated", user });
+        return;
+      } catch {
+        // The stored access token may simply have expired — that is not,
+        // by itself, evidence the session is gone. Falling back to
+        // signed-out here without trying the refresh token would silently
+        // discard a perfectly recoverable session on every page reload,
+        // which is the exact class of bug this bootstrap must not hide.
+      }
+
+      try {
+        const tokens = await api.auth.refresh(stored.refreshToken);
+        if (cancelled) return;
+        await establishSession(tokens.access_token, tokens.refresh_token);
+      } catch {
+        // Only a failed refresh means the session is genuinely gone
+        // (refresh token expired, revoked, or invalid) — that is the one
+        // case where signing the user out is the correct, non-hidden
+        // outcome rather than a fallback masking a bug.
+        if (cancelled) return;
         setAccessToken(null);
+        setRefreshToken(null);
         writeStoredSession(null);
         setState({ status: "anonymous", user: null });
-      });
-  }, []);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [establishSession]);
 
   const login = useCallback(
     async (orgSlug: string, email: string, password: string): Promise<LoginOutcome> => {

@@ -1,0 +1,80 @@
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 16px 0 28px;
+  max-width: 640px;
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  text-decoration: none;
+  color: inherit;
+}
+
+.statCard:hover {
+  border-color: var(--color-accent);
+}
+
+.statValue {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.statLabel {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.recentSection h2 {
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.emptyHint {
+  color: var(--color-text-muted);
+}
+
+.recentList {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recentItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.recentTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentStatus {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.viewAllLink {
+  font-size: 14px;
+  color: var(--color-accent);
+}

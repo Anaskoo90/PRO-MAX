@@ -20,10 +20,6 @@
   color: var(--color-text);
 }
 
-.error {
-  color: var(--color-danger);
-}
-
 .table {
   width: 100%;
   border-collapse: collapse;

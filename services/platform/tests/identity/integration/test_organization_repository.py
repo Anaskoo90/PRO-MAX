@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from app.identity.domain.organization import Organization
@@ -8,7 +10,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_add_then_get_by_id_round_trips(uow) -> None:
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 
@@ -20,7 +22,7 @@ async def test_add_then_get_by_id_round_trips(uow) -> None:
 
 
 async def test_get_by_slug_finds_the_organization(uow) -> None:
-    slug = f"acme-{new_uuid7().hex[:8]}"
+    slug = f"acme-{uuid.uuid4().hex[:12]}"
     org = Organization.create(name="Acme", slug=slug, owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
@@ -32,7 +34,7 @@ async def test_get_by_slug_finds_the_organization(uow) -> None:
 
 
 async def test_update_persists_settings_change(uow) -> None:
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 
@@ -45,11 +47,11 @@ async def test_update_persists_settings_change(uow) -> None:
 
 
 async def test_update_persists_slug_description_and_logo_url(uow) -> None:
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 
-    new_slug = f"acme-corp-{new_uuid7().hex[:8]}"
+    new_slug = f"acme-corp-{uuid.uuid4().hex[:12]}"
     org.change_slug(new_slug)
     org.update_description("A widget company")
     org.update_logo_url("https://cdn.example.com/logo.png")
@@ -63,7 +65,7 @@ async def test_update_persists_slug_description_and_logo_url(uow) -> None:
 
 
 async def test_a_new_organization_has_no_description_or_logo_by_default(uow) -> None:
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 

@@ -1,0 +1,3459 @@
+From a35b139b949b1aa7d6c71cb331482b1c513f8d88 Mon Sep 17 00:00:00 2001
+From: Anaskoo90 <anaskhaled364@gmail.com>
+Date: Sat, 5 Sep 2026 03:26:10 +0000
+Subject: [PATCH] feat: complete phase 2b web saas foundation
+
+---
+ apps/web/src/App.tsx                          |   2 +
+ apps/web/src/auth/AuthContext.tsx             |  48 +++-
+ .../auth/__tests__/ProtectedRoute.test.tsx    |  40 ++-
+ apps/web/src/components/AsyncState.module.css |  31 +++
+ apps/web/src/components/AsyncState.tsx        |  36 +++
+ .../components/__tests__/AsyncState.test.tsx  |  44 ++++
+ apps/web/src/index.css                        |   2 +
+ apps/web/src/layout/AppShell.tsx              |   1 +
+ .../src/pages/DashboardHomePage.module.css    |  80 ++++++
+ apps/web/src/pages/DashboardHomePage.tsx      | 100 +++++++-
+ apps/web/src/pages/InvitationsPage.module.css |  62 +++++
+ apps/web/src/pages/InvitationsPage.tsx        | 158 ++++++++++++
+ apps/web/src/pages/MemberDetailPage.tsx       |   5 +-
+ apps/web/src/pages/MembersPage.module.css     |   4 -
+ apps/web/src/pages/MembersPage.tsx            |  10 +-
+ apps/web/src/pages/RolesPage.module.css       | 113 ++++++++-
+ apps/web/src/pages/RolesPage.tsx              | 232 ++++++++++++++++--
+ apps/web/src/pages/SettingsPage.module.css    |  71 +++++-
+ apps/web/src/pages/SettingsPage.tsx           | 222 ++++++++++++++++-
+ apps/web/src/pages/TicketsPage.module.css     |   4 -
+ apps/web/src/pages/TicketsPage.tsx            |  10 +-
+ .../__tests__/DashboardHomePage.test.tsx      | 117 +++++++++
+ .../pages/__tests__/InvitationsPage.test.tsx  | 133 ++++++++++
+ .../src/pages/__tests__/RolesPage.test.tsx    | 163 +++++++++++-
+ .../src/pages/__tests__/SettingsPage.test.tsx | 114 ++++++++-
+ packages/api-client/src/auth.ts               |  52 ++++
+ packages/api-client/src/client.ts             |   4 +
+ packages/api-client/src/index.ts              |   3 +
+ packages/api-client/src/invitations.ts        |  51 ++++
+ packages/api-client/src/roles.ts              |  28 +++
+ packages/api-client/tests/auth.test.ts        |  97 +++++++-
+ packages/api-client/tests/client.test.ts      |  12 +
+ packages/api-client/tests/invitations.test.ts |  73 ++++++
+ packages/api-client/tests/roles.test.ts       |  68 +++++
+ .../integration/test_invitation_flow.py       |  14 +-
+ .../integration/test_invitation_repository.py |  16 +-
+ .../identity/integration/test_login_flow.py   | 146 +++++++++++
+ .../identity/integration/test_mfa_flow.py     | 133 ++++++++++
+ .../test_organization_repository.py           |  14 +-
+ .../integration/test_registration_flow.py     |   6 +-
+ .../integration/test_user_repository.py       |  41 ++--
+ 41 files changed, 2444 insertions(+), 116 deletions(-)
+ create mode 100644 apps/web/src/components/AsyncState.module.css
+ create mode 100644 apps/web/src/components/AsyncState.tsx
+ create mode 100644 apps/web/src/components/__tests__/AsyncState.test.tsx
+ create mode 100644 apps/web/src/pages/DashboardHomePage.module.css
+ create mode 100644 apps/web/src/pages/InvitationsPage.module.css
+ create mode 100644 apps/web/src/pages/InvitationsPage.tsx
+ create mode 100644 apps/web/src/pages/__tests__/DashboardHomePage.test.tsx
+ create mode 100644 apps/web/src/pages/__tests__/InvitationsPage.test.tsx
+ create mode 100644 packages/api-client/src/invitations.ts
+ create mode 100644 packages/api-client/tests/invitations.test.ts
+ create mode 100644 services/platform/tests/identity/integration/test_login_flow.py
+ create mode 100644 services/platform/tests/identity/integration/test_mfa_flow.py
+
+diff --git a/apps/web/src/App.tsx b/apps/web/src/App.tsx
+index 7f287ca..9c79029 100644
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -9,6 +9,7 @@ import { MembersPage } from "./pages/MembersPage";
+ import { MemberDetailPage } from "./pages/MemberDetailPage";
+ import { RolesPage } from "./pages/RolesPage";
+ import { SettingsPage } from "./pages/SettingsPage";
++import { InvitationsPage } from "./pages/InvitationsPage";
+ 
+ export function App() {
+   return (
+@@ -23,6 +24,7 @@ export function App() {
+               <Route path="members" element={<MembersPage />} />
+               <Route path="members/:userId" element={<MemberDetailPage />} />
+               <Route path="roles" element={<RolesPage />} />
++              <Route path="invitations" element={<InvitationsPage />} />
+               <Route path="settings" element={<SettingsPage />} />
+             </Route>
+           </Route>
+diff --git a/apps/web/src/auth/AuthContext.tsx b/apps/web/src/auth/AuthContext.tsx
+index bdd00ce..819852c 100644
+--- a/apps/web/src/auth/AuthContext.tsx
++++ b/apps/web/src/auth/AuthContext.tsx
+@@ -65,20 +65,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
+       setState({ status: "anonymous", user: null });
+       return;
+     }
+-    setAccessToken(stored.accessToken);
+-    setRefreshToken(stored.refreshToken);
+-    api.auth
+-      .getMyProfile()
+-      .then((user) => setState({ status: "authenticated", user }))
+-      .catch(() => {
+-        // The stored access token is no longer valid (expired, revoked) — a
+-        // refresh-on-startup flow is a later-phase concern, not part of
+-        // Phase 2A's foundation, so this just falls back to signed-out.
++
++    let cancelled = false;
++
++    (async () => {
++      setAccessToken(stored.accessToken);
++      setRefreshToken(stored.refreshToken);
++
++      try {
++        const user = await api.auth.getMyProfile();
++        if (!cancelled) setState({ status: "authenticated", user });
++        return;
++      } catch {
++        // The stored access token may simply have expired — that is not,
++        // by itself, evidence the session is gone. Falling back to
++        // signed-out here without trying the refresh token would silently
++        // discard a perfectly recoverable session on every page reload,
++        // which is the exact class of bug this bootstrap must not hide.
++      }
++
++      try {
++        const tokens = await api.auth.refresh(stored.refreshToken);
++        if (cancelled) return;
++        await establishSession(tokens.access_token, tokens.refresh_token);
++      } catch {
++        // Only a failed refresh means the session is genuinely gone
++        // (refresh token expired, revoked, or invalid) — that is the one
++        // case where signing the user out is the correct, non-hidden
++        // outcome rather than a fallback masking a bug.
++        if (cancelled) return;
+         setAccessToken(null);
++        setRefreshToken(null);
+         writeStoredSession(null);
+         setState({ status: "anonymous", user: null });
+-      });
+-  }, []);
++      }
++    })();
++
++    return () => {
++      cancelled = true;
++    };
++  }, [establishSession]);
+ 
+   const login = useCallback(
+     async (orgSlug: string, email: string, password: string): Promise<LoginOutcome> => {
+diff --git a/apps/web/src/auth/__tests__/ProtectedRoute.test.tsx b/apps/web/src/auth/__tests__/ProtectedRoute.test.tsx
+index 59d7fe3..310fbb2 100644
+--- a/apps/web/src/auth/__tests__/ProtectedRoute.test.tsx
++++ b/apps/web/src/auth/__tests__/ProtectedRoute.test.tsx
+@@ -6,6 +6,7 @@ vi.mock("../../api/apiClient", () => ({
+   api: {
+     auth: {
+       getMyProfile: vi.fn(),
++      refresh: vi.fn(),
+     },
+   },
+   setAccessToken: vi.fn(),
+@@ -20,6 +21,7 @@ const STORAGE_KEY = "guilddesk.auth.session";
+ beforeEach(() => {
+   localStorage.clear();
+   vi.mocked(api.auth.getMyProfile).mockReset();
++  vi.mocked(api.auth.refresh).mockReset();
+ });
+ 
+ function renderProtected() {
+@@ -60,13 +62,47 @@ describe("ProtectedRoute", () => {
+     expect(await screen.findByText("Secret content")).toBeInTheDocument();
+   });
+ 
+-  it("redirects to /login when the stored access token is no longer valid", async () => {
+-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken: "stale", refreshToken: "r" }));
++  it("recovers the session via refresh when the access token is expired but the refresh token is still valid", async () => {
++    localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken: "stale", refreshToken: "still-good" }));
++    vi.mocked(api.auth.getMyProfile)
++      .mockRejectedValueOnce(new Error("401"))
++      .mockResolvedValueOnce({
++        id: "u1",
++        org_id: "o1",
++        email: "a@b.com",
++        display_name: "A",
++        status: "active",
++        mfa_enabled: false,
++      });
++    vi.mocked(api.auth.refresh).mockResolvedValue({
++      access_token: "fresh",
++      refresh_token: "fresh-refresh",
++      token_type: "Bearer",
++      expires_in_seconds: 900,
++    });
++
++    renderProtected();
++
++    // The session must be recovered, not discarded: this is the regression
++    // test for the bootstrap bug where a valid refresh token was never
++    // tried before signing the user out on page reload.
++    expect(await screen.findByText("Secret content")).toBeInTheDocument();
++    expect(api.auth.refresh).toHaveBeenCalledWith("still-good");
++    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toEqual({
++      accessToken: "fresh",
++      refreshToken: "fresh-refresh",
++    });
++  });
++
++  it("redirects to /login and clears storage when both the access token and the refresh token are no longer valid", async () => {
++    localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken: "stale", refreshToken: "also-stale" }));
+     vi.mocked(api.auth.getMyProfile).mockRejectedValue(new Error("401"));
++    vi.mocked(api.auth.refresh).mockRejectedValue(new Error("refresh token expired"));
+ 
+     renderProtected();
+ 
+     expect(await screen.findByText("Login page")).toBeInTheDocument();
++    expect(api.auth.refresh).toHaveBeenCalledWith("also-stale");
+     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+   });
+ });
+diff --git a/apps/web/src/components/AsyncState.module.css b/apps/web/src/components/AsyncState.module.css
+new file mode 100644
+index 0000000..1847b00
+--- /dev/null
++++ b/apps/web/src/components/AsyncState.module.css
+@@ -0,0 +1,31 @@
++.loading {
++  color: var(--color-text-muted);
++  padding: 24px 0;
++}
++
++.error {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 12px 16px;
++  border-radius: 8px;
++  background: var(--color-danger-surface);
++  color: var(--color-danger);
++  margin-bottom: 16px;
++}
++
++.retryButton {
++  padding: 4px 10px;
++  border: 1px solid currentColor;
++  border-radius: 6px;
++  background: transparent;
++  color: inherit;
++  cursor: pointer;
++  white-space: nowrap;
++}
++
++.empty {
++  padding: 32px 16px;
++  text-align: center;
++  color: var(--color-text-muted);
++}
+diff --git a/apps/web/src/components/AsyncState.tsx b/apps/web/src/components/AsyncState.tsx
+new file mode 100644
+index 0000000..3bd75a5
+--- /dev/null
++++ b/apps/web/src/components/AsyncState.tsx
+@@ -0,0 +1,36 @@
++import type { ReactNode } from "react";
++import styles from "./AsyncState.module.css";
++
++/** One shared shape for the three states every dashboard page's async data
++ * can be in — loading, errored, or successfully loaded but empty — so each
++ * page doesn't invent its own wording/markup for the same three cases. */
++
++export function LoadingState({ label }: { label: string }) {
++  return (
++    <p className={styles.loading} role="status">
++      {label}
++    </p>
++  );
++}
++
++export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
++  return (
++    <div className={styles.error} role="alert">
++      <p>{message}</p>
++      {onRetry && (
++        <button type="button" onClick={onRetry} className={styles.retryButton}>
++          Try again
++        </button>
++      )}
++    </div>
++  );
++}
++
++export function EmptyState({ message, action }: { message: string; action?: ReactNode }) {
++  return (
++    <div className={styles.empty}>
++      <p>{message}</p>
++      {action}
++    </div>
++  );
++}
+diff --git a/apps/web/src/components/__tests__/AsyncState.test.tsx b/apps/web/src/components/__tests__/AsyncState.test.tsx
+new file mode 100644
+index 0000000..7526b37
+--- /dev/null
++++ b/apps/web/src/components/__tests__/AsyncState.test.tsx
+@@ -0,0 +1,44 @@
++import { render, screen } from "@testing-library/react";
++import { fireEvent } from "@testing-library/react";
++import { describe, expect, it, vi } from "vitest";
++import { EmptyState, ErrorState, LoadingState } from "../AsyncState";
++
++describe("LoadingState", () => {
++  it("renders the given label as a status region", () => {
++    render(<LoadingState label="Loading members…" />);
++    expect(screen.getByRole("status")).toHaveTextContent("Loading members…");
++  });
++});
++
++describe("ErrorState", () => {
++  it("renders the message as an alert", () => {
++    render(<ErrorState message="Failed to load members." />);
++    expect(screen.getByRole("alert")).toHaveTextContent("Failed to load members.");
++  });
++
++  it("does not render a retry button when onRetry is omitted", () => {
++    render(<ErrorState message="Failed." />);
++    expect(screen.queryByRole("button")).not.toBeInTheDocument();
++  });
++
++  it("calls onRetry when the retry button is clicked", () => {
++    const onRetry = vi.fn();
++    render(<ErrorState message="Failed." onRetry={onRetry} />);
++
++    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
++
++    expect(onRetry).toHaveBeenCalledOnce();
++  });
++});
++
++describe("EmptyState", () => {
++  it("renders the message", () => {
++    render(<EmptyState message="No members match these filters." />);
++    expect(screen.getByText("No members match these filters.")).toBeInTheDocument();
++  });
++
++  it("renders the optional action alongside the message", () => {
++    render(<EmptyState message="No roles yet." action={<button>Create role</button>} />);
++    expect(screen.getByRole("button", { name: "Create role" })).toBeInTheDocument();
++  });
++});
+diff --git a/apps/web/src/index.css b/apps/web/src/index.css
+index 36eeb7f..16f5d98 100644
+--- a/apps/web/src/index.css
++++ b/apps/web/src/index.css
+@@ -7,6 +7,7 @@
+   --color-accent: #4f46e5;
+   --color-accent-contrast: #ffffff;
+   --color-danger: #b3261e;
++  --color-danger-surface: #fdecea;
+   --color-success: #1e7a3e;
+ 
+   --font-sans: system-ui, "Segoe UI", Roboto, sans-serif;
+@@ -24,6 +25,7 @@
+     --color-text-muted: #9a9aa3;
+     --color-accent: #8583ff;
+     --color-accent-contrast: #101014;
++    --color-danger-surface: #3a1f1e;
+   }
+ }
+ 
+diff --git a/apps/web/src/layout/AppShell.tsx b/apps/web/src/layout/AppShell.tsx
+index 628bce3..736655f 100644
+--- a/apps/web/src/layout/AppShell.tsx
++++ b/apps/web/src/layout/AppShell.tsx
+@@ -7,6 +7,7 @@ const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
+   { to: "/tickets", label: "Tickets" },
+   { to: "/members", label: "Members" },
+   { to: "/roles", label: "Roles" },
++  { to: "/invitations", label: "Invitations" },
+   { to: "/settings", label: "Settings" },
+ ];
+ 
+diff --git a/apps/web/src/pages/DashboardHomePage.module.css b/apps/web/src/pages/DashboardHomePage.module.css
+new file mode 100644
+index 0000000..1135f9f
+--- /dev/null
++++ b/apps/web/src/pages/DashboardHomePage.module.css
+@@ -0,0 +1,80 @@
++.statGrid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
++  gap: 12px;
++  margin: 16px 0 28px;
++  max-width: 640px;
++}
++
++.statCard {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  padding: 16px;
++  border: 1px solid var(--color-border);
++  border-radius: 10px;
++  background: var(--color-surface);
++  text-decoration: none;
++  color: inherit;
++}
++
++.statCard:hover {
++  border-color: var(--color-accent);
++}
++
++.statValue {
++  font-size: 28px;
++  font-weight: 700;
++}
++
++.statLabel {
++  font-size: 13px;
++  color: var(--color-text-muted);
++}
++
++.recentSection h2 {
++  font-size: 16px;
++  margin-bottom: 8px;
++}
++
++.emptyHint {
++  color: var(--color-text-muted);
++}
++
++.recentList {
++  list-style: none;
++  margin: 0 0 12px;
++  padding: 0;
++  max-width: 560px;
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++.recentItem {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 8px 12px;
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  font-size: 14px;
++}
++
++.recentTitle {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.recentStatus {
++  flex-shrink: 0;
++  color: var(--color-text-muted);
++  text-transform: capitalize;
++}
++
++.viewAllLink {
++  font-size: 14px;
++  color: var(--color-accent);
++}
+diff --git a/apps/web/src/pages/DashboardHomePage.tsx b/apps/web/src/pages/DashboardHomePage.tsx
+index 1ed3833..d8a14b1 100644
+--- a/apps/web/src/pages/DashboardHomePage.tsx
++++ b/apps/web/src/pages/DashboardHomePage.tsx
+@@ -1,12 +1,110 @@
++import { useEffect, useState } from "react";
++import { Link } from "react-router-dom";
++import { ApiRequestError, type TicketListItem } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
++import { api } from "../api/apiClient";
++import { ErrorState, LoadingState } from "../components/AsyncState";
++import styles from "./DashboardHomePage.module.css";
++
++interface Summary {
++  openTicketCount: number;
++  claimedTicketCount: number;
++  memberCount: number;
++  recentTickets: TicketListItem[];
++}
+ 
+ export function DashboardHomePage() {
+   const { user } = useAuth();
++  const orgId = user?.org_id;
++  const [summary, setSummary] = useState<Summary | null>(null);
++  const [isLoading, setIsLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!orgId) return;
++    let cancelled = false;
++    setIsLoading(true);
++    setError(null);
++
++    // No dashboard-summary endpoint exists on the backend — this composes
++    // the existing ticket search and member search endpoints instead of
++    // inventing a new one, per Phase 2B scope (use existing APIs only).
++    Promise.all([
++      api.tickets.search(orgId, { status: "open", page_size: 1 }),
++      api.tickets.search(orgId, { status: "claimed", page_size: 1 }),
++      api.organizations.searchMembers(orgId, { page_size: 1 }),
++      api.tickets.search(orgId, { sort: "-created_at", page_size: 5 }),
++    ])
++      .then(([openTickets, claimedTickets, members, recent]) => {
++        if (cancelled) return;
++        setSummary({
++          openTicketCount: openTickets.total,
++          claimedTicketCount: claimedTickets.total,
++          memberCount: members.total,
++          recentTickets: recent.data,
++        });
++      })
++      .catch((err: unknown) => {
++        if (!cancelled) setError(err instanceof ApiRequestError ? err.message : "Failed to load dashboard data.");
++      })
++      .finally(() => {
++        if (!cancelled) setIsLoading(false);
++      });
++
++    return () => {
++      cancelled = true;
++    };
++  }, [orgId]);
+ 
+   return (
+     <div>
+       <h1>Welcome{user ? `, ${user.display_name}` : ""}</h1>
+-      <p>Use the navigation on the left to review tickets or manage your organization's settings.</p>
++
++      {error && <ErrorState message={error} />}
++
++      {isLoading ? (
++        <LoadingState label="Loading dashboard…" />
++      ) : (
++        summary && (
++          <>
++            <div className={styles.statGrid}>
++              <Link to="/tickets" className={styles.statCard}>
++                <span className={styles.statValue}>{summary.openTicketCount}</span>
++                <span className={styles.statLabel}>Open tickets</span>
++              </Link>
++              <Link to="/tickets" className={styles.statCard}>
++                <span className={styles.statValue}>{summary.claimedTicketCount}</span>
++                <span className={styles.statLabel}>Claimed tickets</span>
++              </Link>
++              <Link to="/members" className={styles.statCard}>
++                <span className={styles.statValue}>{summary.memberCount}</span>
++                <span className={styles.statLabel}>Members</span>
++              </Link>
++            </div>
++
++            <section className={styles.recentSection}>
++              <h2>Recent tickets</h2>
++              {summary.recentTickets.length === 0 ? (
++                <p className={styles.emptyHint}>No tickets yet.</p>
++              ) : (
++                <ul className={styles.recentList}>
++                  {summary.recentTickets.map((ticket) => (
++                    <li key={ticket.id} className={styles.recentItem}>
++                      <span className={styles.recentTitle}>
++                        #{ticket.ticket_number} {ticket.title}
++                      </span>
++                      <span className={styles.recentStatus}>{ticket.status}</span>
++                    </li>
++                  ))}
++                </ul>
++              )}
++              <Link to="/tickets" className={styles.viewAllLink}>
++                View all tickets →
++              </Link>
++            </section>
++          </>
++        )
++      )}
+     </div>
+   );
+ }
+diff --git a/apps/web/src/pages/InvitationsPage.module.css b/apps/web/src/pages/InvitationsPage.module.css
+new file mode 100644
+index 0000000..f3255af
+--- /dev/null
++++ b/apps/web/src/pages/InvitationsPage.module.css
+@@ -0,0 +1,62 @@
++.createForm {
++  display: flex;
++  gap: 8px;
++  margin-bottom: 16px;
++  flex-wrap: wrap;
++}
++
++.createForm input,
++.createForm select {
++  padding: 8px 10px;
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  background: var(--color-surface);
++  color: var(--color-text);
++}
++
++.createForm input {
++  flex: 1;
++  min-width: 220px;
++}
++
++.createForm button {
++  padding: 8px 14px;
++  border: none;
++  border-radius: 6px;
++  background: var(--color-accent);
++  color: var(--color-accent-contrast);
++  cursor: pointer;
++}
++
++.createForm button:disabled {
++  opacity: 0.5;
++  cursor: not-allowed;
++}
++
++.table {
++  width: 100%;
++  border-collapse: collapse;
++}
++
++.table th,
++.table td {
++  text-align: left;
++  padding: 8px 10px;
++  border-bottom: 1px solid var(--color-border);
++  font-size: 14px;
++}
++
++.table button {
++  padding: 4px 10px;
++  border: 1px solid var(--color-danger);
++  border-radius: 6px;
++  background: transparent;
++  color: var(--color-danger);
++  cursor: pointer;
++  font-size: 13px;
++}
++
++.table button:disabled {
++  opacity: 0.5;
++  cursor: not-allowed;
++}
+diff --git a/apps/web/src/pages/InvitationsPage.tsx b/apps/web/src/pages/InvitationsPage.tsx
+new file mode 100644
+index 0000000..445b4b0
+--- /dev/null
++++ b/apps/web/src/pages/InvitationsPage.tsx
+@@ -0,0 +1,158 @@
++import { useEffect, useState, type FormEvent } from "react";
++import { ApiRequestError, type Invitation, type Role } from "@guilddesk/api-client";
++import { useAuth } from "../auth/AuthContext";
++import { api } from "../api/apiClient";
++import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
++import styles from "./InvitationsPage.module.css";
++
++export function InvitationsPage() {
++  const { user } = useAuth();
++  const orgId = user?.org_id;
++
++  const [invitations, setInvitations] = useState<Invitation[] | null>(null);
++  const [isLoading, setIsLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
++
++  const [roles, setRoles] = useState<Role[]>([]);
++
++  const [email, setEmail] = useState("");
++  const [roleId, setRoleId] = useState("");
++  const [isCreating, setIsCreating] = useState(false);
++  const [createError, setCreateError] = useState<string | null>(null);
++
++  const [revokingId, setRevokingId] = useState<string | null>(null);
++  const [revokeError, setRevokeError] = useState<string | null>(null);
++
++  function loadInvitations(): void {
++    if (!orgId) return;
++    setIsLoading(true);
++    setLoadError(null);
++    api.invitations
++      .listPending(orgId)
++      .then((result) => setInvitations(result))
++      .catch((err: unknown) => {
++        setLoadError(err instanceof ApiRequestError ? err.message : "Failed to load invitations.");
++      })
++      .finally(() => setIsLoading(false));
++  }
++
++  useEffect(() => {
++    loadInvitations();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [orgId]);
++
++  useEffect(() => {
++    if (!orgId) return;
++    api.roles
++      .listForOrg(orgId)
++      .then((result) => {
++        setRoles(result);
++        if (result.length > 0) setRoleId((current) => current || result[0].id);
++      })
++      .catch(() => undefined); // the role picker degrading to empty isn't worth a page-level error
++  }, [orgId]);
++
++  async function handleCreate(event: FormEvent): Promise<void> {
++    event.preventDefault();
++    if (!orgId || !email.trim() || !roleId) return;
++    setCreateError(null);
++    setIsCreating(true);
++    try {
++      await api.invitations.create(orgId, email.trim(), roleId);
++      setEmail("");
++      loadInvitations();
++    } catch (err) {
++      setCreateError(err instanceof ApiRequestError ? err.message : "Couldn't send that invitation.");
++    } finally {
++      setIsCreating(false);
++    }
++  }
++
++  async function handleRevoke(invitation: Invitation): Promise<void> {
++    if (!orgId) return;
++    if (!window.confirm(`Revoke the invitation sent to ${invitation.email}?`)) return;
++    setRevokeError(null);
++    setRevokingId(invitation.id);
++    try {
++      await api.invitations.revoke(orgId, invitation.id);
++      setInvitations((prev) => (prev ? prev.filter((i) => i.id !== invitation.id) : prev));
++    } catch (err) {
++      setRevokeError(err instanceof ApiRequestError ? err.message : "Couldn't revoke that invitation.");
++    } finally {
++      setRevokingId(null);
++    }
++  }
++
++  function roleName(id: string): string {
++    return roles.find((r) => r.id === id)?.name ?? id;
++  }
++
++  return (
++    <div>
++      <h1>Invitations</h1>
++
++      <form className={styles.createForm} onSubmit={(event) => void handleCreate(event)}>
++        <input
++          type="email"
++          value={email}
++          onChange={(event) => setEmail(event.target.value)}
++          placeholder="person@example.com"
++          aria-label="Email to invite"
++          required
++        />
++        <select value={roleId} onChange={(event) => setRoleId(event.target.value)} aria-label="Role for invitation">
++          {roles.length === 0 && <option value="">No roles available</option>}
++          {roles.map((role) => (
++            <option key={role.id} value={role.id}>
++              {role.name}
++            </option>
++          ))}
++        </select>
++        <button type="submit" disabled={isCreating || !email.trim() || !roleId}>
++          {isCreating ? "Sending…" : "Send invitation"}
++        </button>
++      </form>
++      {createError && <ErrorState message={createError} />}
++      {revokeError && <ErrorState message={revokeError} />}
++
++      {loadError ? (
++        <ErrorState message={loadError} onRetry={loadInvitations} />
++      ) : isLoading ? (
++        <LoadingState label="Loading invitations…" />
++      ) : !invitations || invitations.length === 0 ? (
++        <EmptyState message="No pending invitations." />
++      ) : (
++        <table className={styles.table}>
++          <thead>
++            <tr>
++              <th>Email</th>
++              <th>Role</th>
++              <th>Status</th>
++              <th>Expires</th>
++              <th />
++            </tr>
++          </thead>
++          <tbody>
++            {invitations.map((invitation) => (
++              <tr key={invitation.id}>
++                <td>{invitation.email}</td>
++                <td>{roleName(invitation.role_id)}</td>
++                <td>{invitation.status}</td>
++                <td>{new Date(invitation.expires_at).toLocaleDateString()}</td>
++                <td>
++                  <button
++                    type="button"
++                    onClick={() => void handleRevoke(invitation)}
++                    disabled={revokingId === invitation.id}
++                  >
++                    {revokingId === invitation.id ? "Revoking…" : "Revoke"}
++                  </button>
++                </td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      )}
++    </div>
++  );
++}
+diff --git a/apps/web/src/pages/MemberDetailPage.tsx b/apps/web/src/pages/MemberDetailPage.tsx
+index 74a7710..6a519b9 100644
+--- a/apps/web/src/pages/MemberDetailPage.tsx
++++ b/apps/web/src/pages/MemberDetailPage.tsx
+@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
+ import { ApiRequestError, type Role, type UserProfile } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
+ import { api } from "../api/apiClient";
++import { ErrorState, LoadingState } from "../components/AsyncState";
+ import { StatusBadge } from "../components/StatusBadge";
+ import styles from "./MemberDetailPage.module.css";
+ 
+@@ -46,10 +47,10 @@ export function MemberDetailPage() {
+       </Link>
+       <h1>Member details</h1>
+ 
+-      {error && <p className={styles.error}>{error}</p>}
++      {error && <ErrorState message={error} />}
+ 
+       {isLoading ? (
+-        <p>Loading…</p>
++        <LoadingState label="Loading member…" />
+       ) : (
+         member && (
+           <div className={styles.card}>
+diff --git a/apps/web/src/pages/MembersPage.module.css b/apps/web/src/pages/MembersPage.module.css
+index ea2c7ea..06bdd2d 100644
+--- a/apps/web/src/pages/MembersPage.module.css
++++ b/apps/web/src/pages/MembersPage.module.css
+@@ -21,10 +21,6 @@
+   color: var(--color-text);
+ }
+ 
+-.error {
+-  color: var(--color-danger);
+-}
+-
+ .table {
+   width: 100%;
+   border-collapse: collapse;
+diff --git a/apps/web/src/pages/MembersPage.tsx b/apps/web/src/pages/MembersPage.tsx
+index 2d63838..7a46417 100644
+--- a/apps/web/src/pages/MembersPage.tsx
++++ b/apps/web/src/pages/MembersPage.tsx
+@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
+ import { ApiRequestError, type UserProfile } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
+ import { api } from "../api/apiClient";
++import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+ import { Pagination } from "../components/Pagination";
+ import { StatusBadge } from "../components/StatusBadge";
+ import styles from "./MembersPage.module.css";
+@@ -31,6 +32,7 @@ export function MembersPage() {
+   const [status, setStatus] = useState<StatusFilter>("all");
+   const [isLoading, setIsLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
++  const [reloadToken, setReloadToken] = useState(0);
+ 
+   useEffect(() => {
+     if (!orgId) return;
+@@ -62,7 +64,7 @@ export function MembersPage() {
+       cancelled = true;
+       clearTimeout(handle);
+     };
+-  }, [orgId, page, query, status]);
++  }, [orgId, page, query, status, reloadToken]);
+ 
+   function handleQueryChange(next: string): void {
+     setQuery(next);
+@@ -99,12 +101,12 @@ export function MembersPage() {
+         </label>
+       </div>
+ 
+-      {error && <p className={styles.error}>{error}</p>}
++      {error && <ErrorState message={error} onRetry={() => setReloadToken((n) => n + 1)} />}
+ 
+       {isLoading ? (
+-        <p>Loading members…</p>
++        <LoadingState label="Loading members…" />
+       ) : members.length === 0 ? (
+-        <p>No members match these filters.</p>
++        <EmptyState message="No members match these filters." />
+       ) : (
+         <table className={styles.table}>
+           <thead>
+diff --git a/apps/web/src/pages/RolesPage.module.css b/apps/web/src/pages/RolesPage.module.css
+index 872f46e..c824616 100644
+--- a/apps/web/src/pages/RolesPage.module.css
++++ b/apps/web/src/pages/RolesPage.module.css
+@@ -7,10 +7,6 @@
+   margin-bottom: 12px;
+ }
+ 
+-.error {
+-  color: var(--color-danger);
+-}
+-
+ .matrixScroll {
+   overflow-x: auto;
+   background: var(--color-surface);
+@@ -121,3 +117,112 @@
+   gap: 8px;
+   font-size: 14px;
+ }
++
++.createRoleForm {
++  display: flex;
++  gap: 8px;
++  margin-bottom: 16px;
++  flex-wrap: wrap;
++}
++
++.createRoleForm input {
++  padding: 8px 10px;
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  background: var(--color-surface);
++  color: var(--color-text);
++}
++
++.createRoleForm button {
++  padding: 8px 14px;
++  border: none;
++  border-radius: 6px;
++  background: var(--color-accent);
++  color: var(--color-accent-contrast);
++  cursor: pointer;
++}
++
++.createRoleForm button:disabled {
++  opacity: 0.5;
++  cursor: not-allowed;
++}
++
++.roleAdminList {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.roleAdminItem {
++  border: 1px solid var(--color-border);
++  border-radius: 8px;
++  padding: 10px 14px;
++  background: var(--color-surface);
++}
++
++.roleAdminRow {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  flex-wrap: wrap;
++}
++
++.roleAdminName {
++  font-weight: 600;
++  display: flex;
++  align-items: center;
++  gap: 8px;
++}
++
++.systemBadge {
++  font-size: 11px;
++  font-weight: 500;
++  text-transform: uppercase;
++  letter-spacing: 0.03em;
++  color: var(--color-text-muted);
++  border: 1px solid var(--color-border);
++  border-radius: 999px;
++  padding: 2px 8px;
++}
++
++.roleAdminActions {
++  display: flex;
++  gap: 8px;
++  flex-wrap: wrap;
++}
++
++.roleAdminActions button {
++  padding: 4px 10px;
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  background: var(--color-surface);
++  color: var(--color-text);
++  cursor: pointer;
++  font-size: 13px;
++}
++
++.dangerButton {
++  color: var(--color-danger);
++  border-color: var(--color-danger) !important;
++}
++
++.permissionToggleList {
++  list-style: none;
++  margin: 10px 0 0;
++  padding: 10px 0 0;
++  border-top: 1px solid var(--color-border);
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
++  gap: 6px 16px;
++}
++
++.permissionToggleList label {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  font-size: 13px;
++}
+diff --git a/apps/web/src/pages/RolesPage.tsx b/apps/web/src/pages/RolesPage.tsx
+index 5472280..b6dfe70 100644
+--- a/apps/web/src/pages/RolesPage.tsx
++++ b/apps/web/src/pages/RolesPage.tsx
+@@ -1,7 +1,8 @@
+-import { Fragment, useEffect, useState } from "react";
++import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
+ import { ApiRequestError, type PermissionMatrix, type Role, type UserProfile } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
+ import { api } from "../api/apiClient";
++import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+ import styles from "./RolesPage.module.css";
+ 
+ interface PermissionGroup {
+@@ -25,6 +26,7 @@ export function RolesPage() {
+   const { user } = useAuth();
+   const orgId = user?.org_id;
+   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
++  const [isLoadingMatrix, setIsLoadingMatrix] = useState(true);
+   const [matrixError, setMatrixError] = useState<string | null>(null);
+ 
+   const [memberQuery, setMemberQuery] = useState("");
+@@ -34,22 +36,34 @@ export function RolesPage() {
+   const [assignError, setAssignError] = useState<string | null>(null);
+   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
+ 
+-  useEffect(() => {
++  const [newRoleName, setNewRoleName] = useState("");
++  const [newRoleDescription, setNewRoleDescription] = useState("");
++  const [isCreatingRole, setIsCreatingRole] = useState(false);
++  const [createRoleError, setCreateRoleError] = useState<string | null>(null);
++
++  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
++  const [editingRoleName, setEditingRoleName] = useState("");
++  const [roleActionError, setRoleActionError] = useState<string | null>(null);
++  const [pendingRoleAction, setPendingRoleAction] = useState<string | null>(null);
++  const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
++
++  const loadMatrix = useCallback(() => {
+     if (!orgId) return;
+-    let cancelled = false;
+-    api.roles
++    setIsLoadingMatrix(true);
++    setMatrixError(null);
++    return api.roles
+       .getPermissionMatrix(orgId)
+-      .then((result) => {
+-        if (!cancelled) setMatrix(result);
+-      })
++      .then((result) => setMatrix(result))
+       .catch((err: unknown) => {
+-        if (!cancelled) setMatrixError(err instanceof ApiRequestError ? err.message : "Failed to load roles.");
+-      });
+-    return () => {
+-      cancelled = true;
+-    };
++        setMatrixError(err instanceof ApiRequestError ? err.message : "Failed to load roles.");
++      })
++      .finally(() => setIsLoadingMatrix(false));
+   }, [orgId]);
+ 
++  useEffect(() => {
++    void loadMatrix();
++  }, [loadMatrix]);
++
+   useEffect(() => {
+     if (!orgId || memberQuery.trim().length < 2) {
+       setMemberResults([]);
+@@ -106,6 +120,79 @@ export function RolesPage() {
+     }
+   }
+ 
++  async function handleCreateRole(event: FormEvent): Promise<void> {
++    event.preventDefault();
++    if (!newRoleName.trim()) return;
++    setIsCreatingRole(true);
++    setCreateRoleError(null);
++    try {
++      await api.roles.create(newRoleName.trim(), newRoleDescription.trim());
++      setNewRoleName("");
++      setNewRoleDescription("");
++      await loadMatrix();
++    } catch (err) {
++      setCreateRoleError(err instanceof ApiRequestError ? err.message : "Couldn't create that role.");
++    } finally {
++      setIsCreatingRole(false);
++    }
++  }
++
++  function startEditingRole(role: Role): void {
++    setEditingRoleId(role.id);
++    setEditingRoleName(role.name);
++    setRoleActionError(null);
++  }
++
++  async function saveRoleName(role: Role): Promise<void> {
++    if (!editingRoleName.trim() || editingRoleName === role.name) {
++      setEditingRoleId(null);
++      return;
++    }
++    setPendingRoleAction(role.id);
++    setRoleActionError(null);
++    try {
++      await api.roles.update(role.id, editingRoleName.trim());
++      setEditingRoleId(null);
++      await loadMatrix();
++    } catch (err) {
++      setRoleActionError(err instanceof ApiRequestError ? err.message : "Couldn't rename that role.");
++    } finally {
++      setPendingRoleAction(null);
++    }
++  }
++
++  async function handleDeleteRole(role: Role): Promise<void> {
++    if (!window.confirm(`Delete the "${role.name}" role? This cannot be undone.`)) return;
++    setPendingRoleAction(role.id);
++    setRoleActionError(null);
++    try {
++      await api.roles.delete(role.id);
++      await loadMatrix();
++    } catch (err) {
++      setRoleActionError(err instanceof ApiRequestError ? err.message : "Couldn't delete that role.");
++    } finally {
++      setPendingRoleAction(null);
++    }
++  }
++
++  async function togglePermission(role: Role, permissionId: string, isCurrentlyGranted: boolean): Promise<void> {
++    setPendingRoleAction(`${role.id}:${permissionId}`);
++    setRoleActionError(null);
++    try {
++      if (isCurrentlyGranted) {
++        await api.roles.revokePermission(role.id, permissionId);
++      } else {
++        await api.roles.grantPermission(role.id, permissionId);
++      }
++      await loadMatrix();
++    } catch (err) {
++      setRoleActionError(err instanceof ApiRequestError ? err.message : "That permission change couldn't be saved.");
++    } finally {
++      setPendingRoleAction(null);
++    }
++  }
++
++
+   const groups = matrix ? groupPermissionsByResource(matrix.permissions) : [];
+ 
+   return (
+@@ -114,9 +201,12 @@ export function RolesPage() {
+ 
+       <section className={styles.section}>
+         <h2>Permission matrix</h2>
+-        {matrixError && <p className={styles.error}>{matrixError}</p>}
+-        {!matrix ? (
+-          <p>Loading…</p>
++        {matrixError ? (
++          <ErrorState message={matrixError} onRetry={() => void loadMatrix()} />
++        ) : isLoadingMatrix ? (
++          <LoadingState label="Loading roles…" />
++        ) : !matrix || matrix.roles.length === 0 ? (
++          <EmptyState message="No roles yet." />
+         ) : (
+           <div className={styles.matrixScroll}>
+             <table className={styles.matrix}>
+@@ -152,6 +242,114 @@ export function RolesPage() {
+         )}
+       </section>
+ 
++      <section className={styles.section}>
++        <h2>Manage roles</h2>
++
++        <form className={styles.createRoleForm} onSubmit={(event) => void handleCreateRole(event)}>
++          <input
++            type="text"
++            value={newRoleName}
++            onChange={(event) => setNewRoleName(event.target.value)}
++            placeholder="New role name"
++            aria-label="New role name"
++            required
++          />
++          <input
++            type="text"
++            value={newRoleDescription}
++            onChange={(event) => setNewRoleDescription(event.target.value)}
++            placeholder="Description (optional)"
++            aria-label="New role description"
++          />
++          <button type="submit" disabled={isCreatingRole || !newRoleName.trim()}>
++            {isCreatingRole ? "Creating…" : "Create role"}
++          </button>
++        </form>
++        {createRoleError && <ErrorState message={createRoleError} />}
++        {roleActionError && <ErrorState message={roleActionError} />}
++
++        {matrix && matrix.roles.length > 0 && (
++          <ul className={styles.roleAdminList}>
++            {matrix.roles.map((role) => {
++              const isEditing = editingRoleId === role.id;
++              const isExpanded = expandedRoleId === role.id;
++              const isBusy = pendingRoleAction === role.id;
++              return (
++                <li key={role.id} className={styles.roleAdminItem}>
++                  <div className={styles.roleAdminRow}>
++                    {isEditing ? (
++                      <input
++                        type="text"
++                        value={editingRoleName}
++                        onChange={(event) => setEditingRoleName(event.target.value)}
++                        onBlur={() => void saveRoleName(role)}
++                        onKeyDown={(event) => {
++                          if (event.key === "Enter") void saveRoleName(role);
++                          if (event.key === "Escape") setEditingRoleId(null);
++                        }}
++                        autoFocus
++                        aria-label={`Rename ${role.name}`}
++                      />
++                    ) : (
++                      <span className={styles.roleAdminName}>
++                        {role.name}
++                        {role.is_system_role && <span className={styles.systemBadge}>System</span>}
++                      </span>
++                    )}
++
++                    <div className={styles.roleAdminActions}>
++                      <button
++                        type="button"
++                        onClick={() => setExpandedRoleId(isExpanded ? null : role.id)}
++                      >
++                        {isExpanded ? "Hide permissions" : "Edit permissions"}
++                      </button>
++                      {!role.is_system_role && (
++                        <>
++                          <button type="button" disabled={isBusy} onClick={() => startEditingRole(role)}>
++                            Rename
++                          </button>
++                          <button
++                            type="button"
++                            disabled={isBusy}
++                            className={styles.dangerButton}
++                            onClick={() => void handleDeleteRole(role)}
++                          >
++                            Delete
++                          </button>
++                        </>
++                      )}
++                    </div>
++                  </div>
++
++                  {isExpanded && matrix && (
++                    <ul className={styles.permissionToggleList}>
++                      {matrix.permissions.map((permission) => {
++                        const isGranted = role.permission_ids.includes(permission.id);
++                        const isTogglePending = pendingRoleAction === `${role.id}:${permission.id}`;
++                        return (
++                          <li key={permission.id}>
++                            <label>
++                              <input
++                                type="checkbox"
++                                checked={isGranted}
++                                disabled={role.is_system_role || isTogglePending}
++                                onChange={() => void togglePermission(role, permission.id, isGranted)}
++                              />
++                              {permission.resource}:{permission.action}
++                            </label>
++                          </li>
++                        );
++                      })}
++                    </ul>
++                  )}
++                </li>
++              );
++            })}
++          </ul>
++        )}
++      </section>
++
+       <section className={styles.section}>
+         <h2>Assign or remove a member's roles</h2>
+         <div className={styles.memberPicker}>
+@@ -179,9 +377,9 @@ export function RolesPage() {
+             <p>
+               Managing roles for <strong>{selectedMember.display_name}</strong> ({selectedMember.email})
+             </p>
+-            {assignError && <p className={styles.error}>{assignError}</p>}
++            {assignError && <ErrorState message={assignError} />}
+             {memberRoleIds === null || !matrix ? (
+-              <p>Loading…</p>
++              <LoadingState label="Loading this member's roles…" />
+             ) : (
+               <ul className={styles.roleToggleList}>
+                 {matrix.roles.map((role) => {
+diff --git a/apps/web/src/pages/SettingsPage.module.css b/apps/web/src/pages/SettingsPage.module.css
+index 1b2dbc7..58225c8 100644
+--- a/apps/web/src/pages/SettingsPage.module.css
++++ b/apps/web/src/pages/SettingsPage.module.css
+@@ -42,10 +42,6 @@
+   min-height: 160px;
+ }
+ 
+-.error {
+-  color: var(--color-danger);
+-}
+-
+ .success {
+   color: var(--color-success);
+ }
+@@ -105,6 +101,71 @@
+   cursor: not-allowed;
+ }
+ 
+-.comingSoon {
++.securityLayout {
++  display: flex;
++  flex-direction: column;
++  gap: 28px;
++}
++
++.securitySection h2 {
++  margin: 0 0 10px;
++  font-size: 15px;
++}
++
++.secretCode {
++  font-family: monospace;
++  font-size: 14px;
++  background: var(--color-bg);
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  padding: 8px 10px;
++  word-break: break-all;
++}
++
++.recoveryCodeList {
++  list-style: none;
++  margin: 8px 0;
++  padding: 12px;
++  background: var(--color-bg);
++  border: 1px solid var(--color-border);
++  border-radius: 6px;
++  font-family: monospace;
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
++  gap: 4px;
++}
++
++.inlineActions {
++  display: flex;
++  gap: 8px;
++}
++
++.sessionList {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.sessionItem {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 10px 14px;
++  border: 1px solid var(--color-border);
++  border-radius: 8px;
++}
++
++.sessionDevice {
++  margin: 0;
++  font-weight: 600;
++}
++
++.sessionMeta {
++  margin: 2px 0 0;
++  font-size: 13px;
+   color: var(--color-text-muted);
+ }
+diff --git a/apps/web/src/pages/SettingsPage.tsx b/apps/web/src/pages/SettingsPage.tsx
+index 417911c..c622446 100644
+--- a/apps/web/src/pages/SettingsPage.tsx
++++ b/apps/web/src/pages/SettingsPage.tsx
+@@ -1,7 +1,8 @@
+ import { useEffect, useState, type FormEvent } from "react";
+-import { ApiRequestError, type Organization } from "@guilddesk/api-client";
++import { ApiRequestError, type Organization, type Session, type TotpEnrollment } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
+ import { api } from "../api/apiClient";
++import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+ import styles from "./SettingsPage.module.css";
+ 
+ type SectionId = "general" | "security";
+@@ -26,6 +27,22 @@ export function SettingsPage() {
+   const [isLoading, setIsLoading] = useState(true);
+   const [isSaving, setIsSaving] = useState(false);
+ 
++  // --- Security tab: MFA -------------------------------------------------
++  const [mfaEnabled, setMfaEnabled] = useState<boolean | null>(null);
++  const [isLoadingMfaStatus, setIsLoadingMfaStatus] = useState(true);
++  const [mfaStatusError, setMfaStatusError] = useState<string | null>(null);
++  const [enrollment, setEnrollment] = useState<TotpEnrollment | null>(null);
++  const [enrollmentCode, setEnrollmentCode] = useState("");
++  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
++  const [mfaActionError, setMfaActionError] = useState<string | null>(null);
++  const [isMfaActionPending, setIsMfaActionPending] = useState(false);
++
++  // --- Security tab: sessions ---------------------------------------------
++  const [sessions, setSessions] = useState<Session[] | null>(null);
++  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
++  const [sessionsError, setSessionsError] = useState<string | null>(null);
++  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
++
+   useEffect(() => {
+     if (!orgId) return;
+     let cancelled = false;
+@@ -54,6 +71,99 @@ export function SettingsPage() {
+     };
+   }, [orgId]);
+ 
++  function loadMfaStatus(): void {
++    setIsLoadingMfaStatus(true);
++    setMfaStatusError(null);
++    api.auth
++      .getMyProfile()
++      .then((profile) => setMfaEnabled(profile.mfa_enabled))
++      .catch((err: unknown) => {
++        setMfaStatusError(err instanceof ApiRequestError ? err.message : "Failed to load MFA status.");
++      })
++      .finally(() => setIsLoadingMfaStatus(false));
++  }
++
++  function loadSessions(): void {
++    setIsLoadingSessions(true);
++    setSessionsError(null);
++    api.auth
++      .listSessions()
++      .then((result) => setSessions(result))
++      .catch((err: unknown) => {
++        setSessionsError(err instanceof ApiRequestError ? err.message : "Failed to load active sessions.");
++      })
++      .finally(() => setIsLoadingSessions(false));
++  }
++
++  useEffect(() => {
++    if (activeSection !== "security") return;
++    loadMfaStatus();
++    loadSessions();
++    // Re-run whenever the Security tab is opened, so returning to it after
++    // enabling/disabling MFA elsewhere (or in another tab) shows current state.
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [activeSection]);
++
++  async function handleStartEnrollment(): Promise<void> {
++    setMfaActionError(null);
++    setIsMfaActionPending(true);
++    try {
++      const result = await api.auth.startTotpEnrollment();
++      setEnrollment(result);
++    } catch (err) {
++      setMfaActionError(err instanceof ApiRequestError ? err.message : "Couldn't start MFA enrollment.");
++    } finally {
++      setIsMfaActionPending(false);
++    }
++  }
++
++  async function handleConfirmEnrollment(event: FormEvent): Promise<void> {
++    event.preventDefault();
++    if (!enrollment || !enrollmentCode.trim()) return;
++    setMfaActionError(null);
++    setIsMfaActionPending(true);
++    try {
++      const codes = await api.auth.confirmTotpEnrollment(enrollment.factor_id, enrollmentCode.trim());
++      setRecoveryCodes(codes.recovery_codes);
++      setEnrollment(null);
++      setEnrollmentCode("");
++      setMfaEnabled(true);
++    } catch (err) {
++      setMfaActionError(err instanceof ApiRequestError ? err.message : "That code didn't work — try again.");
++    } finally {
++      setIsMfaActionPending(false);
++    }
++  }
++
++  async function handleDisableMfa(): Promise<void> {
++    if (!window.confirm("Turn off two-factor authentication for your account?")) return;
++    setMfaActionError(null);
++    setIsMfaActionPending(true);
++    try {
++      await api.auth.disableMfa();
++      setMfaEnabled(false);
++      setRecoveryCodes(null);
++    } catch (err) {
++      setMfaActionError(err instanceof ApiRequestError ? err.message : "Couldn't disable MFA.");
++    } finally {
++      setIsMfaActionPending(false);
++    }
++  }
++
++  async function handleRevokeSession(session: Session): Promise<void> {
++    if (!window.confirm("Sign out this session? The device using it will be signed out immediately.")) return;
++    setSessionsError(null);
++    setRevokingSessionId(session.id);
++    try {
++      await api.auth.revokeSession(session.id);
++      setSessions((prev) => (prev ? prev.filter((s) => s.id !== session.id) : prev));
++    } catch (err) {
++      setSessionsError(err instanceof ApiRequestError ? err.message : "Couldn't revoke that session.");
++    } finally {
++      setRevokingSessionId(null);
++    }
++  }
++
+   async function handleSubmit(event: FormEvent): Promise<void> {
+     event.preventDefault();
+     if (!orgId) return;
+@@ -93,11 +203,11 @@ export function SettingsPage() {
+           ))}
+         </nav>
+         <div className={styles.content}>
+-          {loadError && <p className={styles.error}>{loadError}</p>}
++          {loadError && <ErrorState message={loadError} />}
+ 
+           {activeSection === "general" &&
+             (isLoading ? (
+-              <p>Loading…</p>
++              <LoadingState label="Loading organization…" />
+             ) : (
+               organization && (
+                 <form className={styles.form} onSubmit={handleSubmit}>
+@@ -127,10 +237,13 @@ export function SettingsPage() {
+                       placeholder="https://…"
+                     />
+                   </label>
++                  <p className={styles.hint}>
++                    GuildDesk links to an image you host elsewhere — uploading a logo file directly isn't supported yet.
++                  </p>
+                   <p className={styles.readOnlyRow}>
+                     Status: <strong>{organization.status}</strong>
+                   </p>
+-                  {saveError && <p className={styles.error}>{saveError}</p>}
++                  {saveError && <ErrorState message={saveError} />}
+                   {saveSuccess && <p className={styles.success}>Saved.</p>}
+                   <button type="submit" disabled={isSaving}>
+                     {isSaving ? "Saving…" : "Save changes"}
+@@ -139,7 +252,106 @@ export function SettingsPage() {
+               )
+             ))}
+ 
+-          {activeSection === "security" && <p className={styles.comingSoon}>Security settings are coming soon.</p>}
++          {activeSection === "security" && (
++            <div className={styles.securityLayout}>
++              <section className={styles.securitySection}>
++                <h2>Two-factor authentication</h2>
++                {mfaStatusError ? (
++                  <ErrorState message={mfaStatusError} onRetry={loadMfaStatus} />
++                ) : isLoadingMfaStatus ? (
++                  <LoadingState label="Loading MFA status…" />
++                ) : recoveryCodes ? (
++                  <div>
++                    <p className={styles.success}>Two-factor authentication is now enabled.</p>
++                    <p>Save these recovery codes somewhere safe — each one can be used once if you lose access to your authenticator app.</p>
++                    <ul className={styles.recoveryCodeList}>
++                      {recoveryCodes.map((code) => (
++                        <li key={code}>{code}</li>
++                      ))}
++                    </ul>
++                    <button type="button" onClick={() => setRecoveryCodes(null)}>
++                      Done
++                    </button>
++                  </div>
++                ) : enrollment ? (
++                  <form className={styles.form} onSubmit={(event) => void handleConfirmEnrollment(event)}>
++                    <p>Scan this into your authenticator app, or enter the code manually:</p>
++                    <p className={styles.secretCode}>{enrollment.secret}</p>
++                    <label className={styles.field}>
++                      Enter the 6-digit code from your app
++                      <input
++                        value={enrollmentCode}
++                        onChange={(event) => setEnrollmentCode(event.target.value)}
++                        inputMode="numeric"
++                        autoFocus
++                        required
++                      />
++                    </label>
++                    {mfaActionError && <ErrorState message={mfaActionError} />}
++                    <div className={styles.inlineActions}>
++                      <button type="submit" disabled={isMfaActionPending || !enrollmentCode.trim()}>
++                        {isMfaActionPending ? "Confirming…" : "Confirm"}
++                      </button>
++                      <button type="button" onClick={() => setEnrollment(null)} disabled={isMfaActionPending}>
++                        Cancel
++                      </button>
++                    </div>
++                  </form>
++                ) : mfaEnabled ? (
++                  <div>
++                    <p>Two-factor authentication is currently <strong>enabled</strong> for your account.</p>
++                    {mfaActionError && <ErrorState message={mfaActionError} />}
++                    <button type="button" onClick={() => void handleDisableMfa()} disabled={isMfaActionPending}>
++                      {isMfaActionPending ? "Disabling…" : "Disable two-factor authentication"}
++                    </button>
++                  </div>
++                ) : (
++                  <div>
++                    <p>Two-factor authentication is currently <strong>disabled</strong> for your account.</p>
++                    {mfaActionError && <ErrorState message={mfaActionError} />}
++                    <button type="button" onClick={() => void handleStartEnrollment()} disabled={isMfaActionPending}>
++                      {isMfaActionPending ? "Starting…" : "Enable two-factor authentication"}
++                    </button>
++                  </div>
++                )}
++              </section>
++
++              <section className={styles.securitySection}>
++                <h2>Active sessions</h2>
++                {sessionsError ? (
++                  <ErrorState message={sessionsError} onRetry={loadSessions} />
++                ) : isLoadingSessions ? (
++                  <LoadingState label="Loading active sessions…" />
++                ) : !sessions || sessions.length === 0 ? (
++                  <EmptyState message="No active sessions." />
++                ) : (
++                  <ul className={styles.sessionList}>
++                    {sessions.map((session) => (
++                      <li key={session.id} className={styles.sessionItem}>
++                        <div>
++                          <p className={styles.sessionDevice}>{session.device_label || "Unknown device"}</p>
++                          <p className={styles.sessionMeta}>
++                            {session.ip_address} · signed in {new Date(session.created_at).toLocaleString()}
++                          </p>
++                        </div>
++                        <button
++                          type="button"
++                          onClick={() => void handleRevokeSession(session)}
++                          disabled={revokingSessionId === session.id}
++                        >
++                          {revokingSessionId === session.id ? "Revoking…" : "Revoke"}
++                        </button>
++                      </li>
++                    ))}
++                  </ul>
++                )}
++                <p className={styles.hint}>
++                  Sessions aren't currently flagged as "this device" — if you're unsure which one you're using, sign
++                  out from the General tab instead of guessing here.
++                </p>
++              </section>
++            </div>
++          )}
+         </div>
+       </div>
+     </div>
+diff --git a/apps/web/src/pages/TicketsPage.module.css b/apps/web/src/pages/TicketsPage.module.css
+index b4a5df0..c9f5098 100644
+--- a/apps/web/src/pages/TicketsPage.module.css
++++ b/apps/web/src/pages/TicketsPage.module.css
+@@ -20,10 +20,6 @@
+   color: var(--color-text);
+ }
+ 
+-.error {
+-  color: var(--color-danger);
+-}
+-
+ .table {
+   width: 100%;
+   border-collapse: collapse;
+diff --git a/apps/web/src/pages/TicketsPage.tsx b/apps/web/src/pages/TicketsPage.tsx
+index 8fa9dbd..8119e03 100644
+--- a/apps/web/src/pages/TicketsPage.tsx
++++ b/apps/web/src/pages/TicketsPage.tsx
+@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
+ import { ApiRequestError, type TicketListItem } from "@guilddesk/api-client";
+ import { useAuth } from "../auth/AuthContext";
+ import { api } from "../api/apiClient";
++import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+ import { Pagination } from "../components/Pagination";
+ import { StatusBadge } from "../components/StatusBadge";
+ import styles from "./TicketsPage.module.css";
+@@ -29,6 +30,7 @@ export function TicketsPage() {
+   const [sort, setSort] = useState(SORT_OPTIONS[0].value);
+   const [isLoading, setIsLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
++  const [reloadToken, setReloadToken] = useState(0);
+ 
+   useEffect(() => {
+     if (!orgId) return;
+@@ -60,7 +62,7 @@ export function TicketsPage() {
+     return () => {
+       cancelled = true;
+     };
+-  }, [orgId, page, status, sort]);
++  }, [orgId, page, status, sort, reloadToken]);
+ 
+   function handleStatusChange(next: StatusFilter): void {
+     setStatus(next);
+@@ -98,12 +100,12 @@ export function TicketsPage() {
+         </label>
+       </div>
+ 
+-      {error && <p className={styles.error}>{error}</p>}
++      {error && <ErrorState message={error} onRetry={() => setReloadToken((n) => n + 1)} />}
+ 
+       {isLoading ? (
+-        <p>Loading tickets…</p>
++        <LoadingState label="Loading tickets…" />
+       ) : tickets.length === 0 ? (
+-        <p>No tickets match these filters.</p>
++        <EmptyState message="No tickets match these filters." />
+       ) : (
+         <table className={styles.table}>
+           <thead>
+diff --git a/apps/web/src/pages/__tests__/DashboardHomePage.test.tsx b/apps/web/src/pages/__tests__/DashboardHomePage.test.tsx
+new file mode 100644
+index 0000000..097f01e
+--- /dev/null
++++ b/apps/web/src/pages/__tests__/DashboardHomePage.test.tsx
+@@ -0,0 +1,117 @@
++import { render, screen } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("../../auth/AuthContext", () => ({
++  useAuth: () => ({
++    status: "authenticated",
++    user: { id: "u1", org_id: "org-1", email: "a@b.com", display_name: "Ada", status: "active", mfa_enabled: false },
++    login: vi.fn(),
++    completeMfaChallenge: vi.fn(),
++    logout: vi.fn(),
++  }),
++}));
++
++vi.mock("../../api/apiClient", () => ({
++  api: {
++    tickets: { search: vi.fn() },
++    organizations: { searchMembers: vi.fn() },
++  },
++}));
++
++import { api } from "../../api/apiClient";
++import { DashboardHomePage } from "../DashboardHomePage";
++
++function renderPage() {
++  return render(
++    <MemoryRouter>
++      <DashboardHomePage />
++    </MemoryRouter>,
++  );
++}
++
++const SAMPLE_TICKET = {
++  id: "t1", ticket_number: 42, title: "Can't log in", status: "open", discord_channel_id: "c1",
++  opener_discord_user_id: "1", claimed_by_discord_user_id: null, created_at: "2026-01-01T00:00:00Z",
++  closed_at: null,
++};
++
++beforeEach(() => {
++  vi.mocked(api.tickets.search).mockReset();
++  vi.mocked(api.organizations.searchMembers).mockReset();
++});
++
++describe("DashboardHomePage", () => {
++  it("greets the signed-in user by name", async () => {
++    vi.mocked(api.tickets.search).mockResolvedValue({ data: [], page: 1, page_size: 5, total: 0, total_pages: 0 });
++    vi.mocked(api.organizations.searchMembers).mockResolvedValue({
++      data: [], page: 1, page_size: 1, total: 0, total_pages: 0,
++    });
++
++    renderPage();
++
++    expect(await screen.findByRole("heading", { name: "Welcome, Ada" })).toBeInTheDocument();
++  });
++
++  it("shows open/claimed ticket counts and member count from the existing search endpoints", async () => {
++    vi.mocked(api.tickets.search).mockImplementation((_orgId, params) => {
++      if (params?.status === "open") {
++        return Promise.resolve({ data: [], page: 1, page_size: 1, total: 3, total_pages: 3 });
++      }
++      if (params?.status === "claimed") {
++        return Promise.resolve({ data: [], page: 1, page_size: 1, total: 2, total_pages: 2 });
++      }
++      return Promise.resolve({ data: [SAMPLE_TICKET], page: 1, page_size: 5, total: 5, total_pages: 1 });
++    });
++    vi.mocked(api.organizations.searchMembers).mockResolvedValue({
++      data: [], page: 1, page_size: 1, total: 12, total_pages: 12,
++    });
++
++    renderPage();
++
++    expect(await screen.findByText("3")).toBeInTheDocument();
++    expect(screen.getByText("2")).toBeInTheDocument();
++    expect(screen.getByText("12")).toBeInTheDocument();
++    expect(screen.getByText("Open tickets")).toBeInTheDocument();
++    expect(screen.getByText("Claimed tickets")).toBeInTheDocument();
++    expect(screen.getByText("Members")).toBeInTheDocument();
++  });
++
++  it("lists recent tickets returned by the sorted ticket search", async () => {
++    vi.mocked(api.tickets.search).mockImplementation((_orgId, params) => {
++      if (params?.sort === "-created_at") {
++        return Promise.resolve({ data: [SAMPLE_TICKET], page: 1, page_size: 5, total: 1, total_pages: 1 });
++      }
++      return Promise.resolve({ data: [], page: 1, page_size: 1, total: 0, total_pages: 0 });
++    });
++    vi.mocked(api.organizations.searchMembers).mockResolvedValue({
++      data: [], page: 1, page_size: 1, total: 0, total_pages: 0,
++    });
++
++    renderPage();
++
++    expect(await screen.findByText("#42 Can't log in")).toBeInTheDocument();
++  });
++
++  it("shows an empty hint when there are no recent tickets", async () => {
++    vi.mocked(api.tickets.search).mockResolvedValue({ data: [], page: 1, page_size: 5, total: 0, total_pages: 0 });
++    vi.mocked(api.organizations.searchMembers).mockResolvedValue({
++      data: [], page: 1, page_size: 1, total: 0, total_pages: 0,
++    });
++
++    renderPage();
++
++    expect(await screen.findByText("No tickets yet.")).toBeInTheDocument();
++  });
++
++  it("shows an error state when loading the dashboard data fails", async () => {
++    vi.mocked(api.tickets.search).mockRejectedValue(new Error("boom"));
++    vi.mocked(api.organizations.searchMembers).mockResolvedValue({
++      data: [], page: 1, page_size: 1, total: 0, total_pages: 0,
++    });
++
++    renderPage();
++
++    expect(await screen.findByText("Failed to load dashboard data.")).toBeInTheDocument();
++  });
++});
+diff --git a/apps/web/src/pages/__tests__/InvitationsPage.test.tsx b/apps/web/src/pages/__tests__/InvitationsPage.test.tsx
+new file mode 100644
+index 0000000..585a5d9
+--- /dev/null
++++ b/apps/web/src/pages/__tests__/InvitationsPage.test.tsx
+@@ -0,0 +1,133 @@
++import { render, screen, waitFor, within } from "@testing-library/react";
++import userEvent from "@testing-library/user-event";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("../../auth/AuthContext", () => ({
++  useAuth: () => ({
++    status: "authenticated",
++    user: { id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false },
++    login: vi.fn(),
++    completeMfaChallenge: vi.fn(),
++    logout: vi.fn(),
++  }),
++}));
++
++vi.mock("../../api/apiClient", () => ({
++  api: {
++    invitations: { listPending: vi.fn(), create: vi.fn(), revoke: vi.fn() },
++    roles: { listForOrg: vi.fn() },
++  },
++}));
++
++import { api } from "../../api/apiClient";
++import { InvitationsPage } from "../InvitationsPage";
++
++const SAMPLE_INVITATION = {
++  id: "i1", org_id: "org-1", email: "new.hire@example.com", role_id: "r1", invited_by_user_id: "u1",
++  status: "pending", created_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-08T00:00:00Z",
++};
++
++const SAMPLE_ROLES = [
++  { id: "r1", org_id: "org-1", name: "Support", description: "", is_system_role: false, parent_role_id: null, permission_ids: [] },
++];
++
++beforeEach(() => {
++  vi.mocked(api.invitations.listPending).mockReset();
++  vi.mocked(api.invitations.create).mockReset();
++  vi.mocked(api.invitations.revoke).mockReset();
++  vi.mocked(api.roles.listForOrg).mockReset();
++  vi.mocked(api.roles.listForOrg).mockResolvedValue(SAMPLE_ROLES);
++});
++
++describe("InvitationsPage", () => {
++  it("renders pending invitations with their role name resolved", async () => {
++    vi.mocked(api.invitations.listPending).mockResolvedValue([SAMPLE_INVITATION]);
++
++    render(<InvitationsPage />);
++
++    const table = await screen.findByRole("table");
++    expect(within(table).getByText("new.hire@example.com")).toBeInTheDocument();
++    expect(within(table).getByText("Support")).toBeInTheDocument();
++  });
++
++  it("shows an empty state when there are no pending invitations", async () => {
++    vi.mocked(api.invitations.listPending).mockResolvedValue([]);
++
++    render(<InvitationsPage />);
++
++    expect(await screen.findByText("No pending invitations.")).toBeInTheDocument();
++  });
++
++  it("shows an error state with retry when loading invitations fails", async () => {
++    vi.mocked(api.invitations.listPending).mockRejectedValueOnce(new Error("boom"));
++    vi.mocked(api.invitations.listPending).mockResolvedValueOnce([SAMPLE_INVITATION]);
++
++    render(<InvitationsPage />);
++
++    expect(await screen.findByText("Failed to load invitations.")).toBeInTheDocument();
++    await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
++
++    expect(await screen.findByText("new.hire@example.com")).toBeInTheDocument();
++  });
++
++  it("creates a new invitation and reloads the list", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.invitations.listPending).mockResolvedValueOnce([]).mockResolvedValueOnce([SAMPLE_INVITATION]);
++    vi.mocked(api.invitations.create).mockResolvedValue(SAMPLE_INVITATION);
++
++    render(<InvitationsPage />);
++    await screen.findByText("No pending invitations.");
++
++    await user.type(screen.getByLabelText("Email to invite"), "new.hire@example.com");
++    await user.click(screen.getByRole("button", { name: "Send invitation" }));
++
++    await waitFor(() => {
++      expect(api.invitations.create).toHaveBeenCalledWith("org-1", "new.hire@example.com", "r1");
++    });
++    expect(await screen.findByText("new.hire@example.com")).toBeInTheDocument();
++  });
++
++  it("shows an error when creating an invitation fails", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.invitations.listPending).mockResolvedValue([]);
++    vi.mocked(api.invitations.create).mockRejectedValue(new Error("boom"));
++
++    render(<InvitationsPage />);
++    await screen.findByText("No pending invitations.");
++
++    await user.type(screen.getByLabelText("Email to invite"), "new.hire@example.com");
++    await user.click(screen.getByRole("button", { name: "Send invitation" }));
++
++    expect(await screen.findByText("Couldn't send that invitation.")).toBeInTheDocument();
++  });
++
++  it("revokes an invitation after confirmation", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.invitations.listPending).mockResolvedValue([SAMPLE_INVITATION]);
++    vi.mocked(api.invitations.revoke).mockResolvedValue(undefined);
++    vi.spyOn(window, "confirm").mockReturnValue(true);
++
++    render(<InvitationsPage />);
++    await screen.findByText("new.hire@example.com");
++
++    await user.click(screen.getByRole("button", { name: "Revoke" }));
++
++    await waitFor(() => {
++      expect(api.invitations.revoke).toHaveBeenCalledWith("org-1", "i1");
++    });
++    expect(screen.queryByText("new.hire@example.com")).not.toBeInTheDocument();
++  });
++
++  it("does not revoke when the confirmation is declined", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.invitations.listPending).mockResolvedValue([SAMPLE_INVITATION]);
++    vi.spyOn(window, "confirm").mockReturnValue(false);
++
++    render(<InvitationsPage />);
++    await screen.findByText("new.hire@example.com");
++
++    await user.click(screen.getByRole("button", { name: "Revoke" }));
++
++    expect(api.invitations.revoke).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/web/src/pages/__tests__/RolesPage.test.tsx b/apps/web/src/pages/__tests__/RolesPage.test.tsx
+index 5bb67d0..10a531a 100644
+--- a/apps/web/src/pages/__tests__/RolesPage.test.tsx
++++ b/apps/web/src/pages/__tests__/RolesPage.test.tsx
+@@ -1,4 +1,4 @@
+-import { render, screen, waitFor } from "@testing-library/react";
++import { render, screen, waitFor, within } from "@testing-library/react";
+ import userEvent from "@testing-library/user-event";
+ import { beforeEach, describe, expect, it, vi } from "vitest";
+ 
+@@ -14,7 +14,17 @@ vi.mock("../../auth/AuthContext", () => ({
+ 
+ vi.mock("../../api/apiClient", () => ({
+   api: {
+-    roles: { getPermissionMatrix: vi.fn(), listForMember: vi.fn(), assignToUser: vi.fn(), revokeFromUser: vi.fn() },
++    roles: {
++      getPermissionMatrix: vi.fn(),
++      listForMember: vi.fn(),
++      assignToUser: vi.fn(),
++      revokeFromUser: vi.fn(),
++      create: vi.fn(),
++      update: vi.fn(),
++      delete: vi.fn(),
++      grantPermission: vi.fn(),
++      revokePermission: vi.fn(),
++    },
+     organizations: { searchMembers: vi.fn() },
+   },
+ }));
+@@ -38,6 +48,11 @@ beforeEach(() => {
+   vi.mocked(api.roles.listForMember).mockReset();
+   vi.mocked(api.roles.assignToUser).mockReset();
+   vi.mocked(api.roles.revokeFromUser).mockReset();
++  vi.mocked(api.roles.create).mockReset();
++  vi.mocked(api.roles.update).mockReset();
++  vi.mocked(api.roles.delete).mockReset();
++  vi.mocked(api.roles.grantPermission).mockReset();
++  vi.mocked(api.roles.revokePermission).mockReset();
+   vi.mocked(api.organizations.searchMembers).mockReset();
+ });
+ 
+@@ -47,10 +62,11 @@ describe("RolesPage", () => {
+ 
+     render(<RolesPage />);
+ 
+-    expect(await screen.findByText("member")).toBeInTheDocument();
+-    expect(screen.getByText("support")).toBeInTheDocument();
+-    expect(screen.getByText("read")).toBeInTheDocument();
+-    expect(screen.getByText("assign")).toBeInTheDocument();
++    const table = await screen.findByRole("table");
++    expect(within(table).getByText("member")).toBeInTheDocument();
++    expect(within(table).getByText("support")).toBeInTheDocument();
++    expect(within(table).getByText("read")).toBeInTheDocument();
++    expect(within(table).getByText("assign")).toBeInTheDocument();
+   });
+ 
+   it("searches for a member and toggles a role assignment on and off", async () => {
+@@ -64,7 +80,7 @@ describe("RolesPage", () => {
+     vi.mocked(api.roles.assignToUser).mockResolvedValue(undefined);
+ 
+     render(<RolesPage />);
+-    await screen.findByText("member");
++    await screen.findByRole("table");
+ 
+     await user.type(screen.getByPlaceholderText(/search members/i), "alice");
+     const memberOption = await screen.findByRole("button", { name: /alice — alice@example.com/i });
+@@ -81,4 +97,137 @@ describe("RolesPage", () => {
+       expect(api.roles.assignToUser).toHaveBeenCalledWith("m1", "r2");
+     });
+   });
++
++  it("creates a new role and reloads the matrix", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++    vi.mocked(api.roles.create).mockResolvedValue({
++      id: "r3", org_id: "org-1", name: "Billing", description: "", is_system_role: false, parent_role_id: null, permission_ids: [],
++    });
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    await user.type(screen.getByLabelText("New role name"), "Billing");
++    await user.click(screen.getByRole("button", { name: "Create role" }));
++
++    await waitFor(() => {
++      expect(api.roles.create).toHaveBeenCalledWith("Billing", "");
++    });
++    // The matrix is reloaded after a successful create.
++    expect(api.roles.getPermissionMatrix).toHaveBeenCalledTimes(2);
++  });
++
++  it("does not offer rename/delete for a system role, only for a custom role", async () => {
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const items = screen.getAllByRole("listitem");
++    const systemRoleItem = items.find((item) => item.textContent?.includes("member"));
++    const customRoleItem = items.find((item) => item.textContent?.includes("support"));
++
++    expect(systemRoleItem).toBeDefined();
++    expect(customRoleItem).toBeDefined();
++    // Scope queries to each role's own row rather than the whole page.
++    const { getByRole: getByRoleInSystemItem, queryByRole: queryByRoleInSystemItem } = within(systemRoleItem!);
++    const { getByRole: getByRoleInCustomItem } = within(customRoleItem!);
++
++    expect(queryByRoleInSystemItem("button", { name: "Rename" })).not.toBeInTheDocument();
++    expect(getByRoleInSystemItem("button", { name: "Edit permissions" })).toBeInTheDocument();
++    expect(getByRoleInCustomItem("button", { name: "Rename" })).toBeInTheDocument();
++    expect(getByRoleInCustomItem("button", { name: "Delete" })).toBeInTheDocument();
++  });
++
++  it("renames a custom role on Enter", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++    vi.mocked(api.roles.update).mockResolvedValue({ ...SAMPLE_MATRIX.roles[1], name: "Support Lead" });
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const customRoleItem = screen.getAllByRole("listitem").find((item) => item.textContent?.includes("support"))!;
++    await user.click(within(customRoleItem).getByRole("button", { name: "Rename" }));
++
++    const input = within(customRoleItem).getByLabelText("Rename support");
++    await user.clear(input);
++    await user.type(input, "Support Lead{Enter}");
++
++    await waitFor(() => {
++      expect(api.roles.update).toHaveBeenCalledWith("r2", "Support Lead");
++    });
++  });
++
++  it("deletes a custom role after confirmation", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++    vi.mocked(api.roles.delete).mockResolvedValue(undefined);
++    vi.spyOn(window, "confirm").mockReturnValue(true);
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const customRoleItem = screen.getAllByRole("listitem").find((item) => item.textContent?.includes("support"))!;
++    await user.click(within(customRoleItem).getByRole("button", { name: "Delete" }));
++
++    await waitFor(() => {
++      expect(api.roles.delete).toHaveBeenCalledWith("r2");
++    });
++  });
++
++  it("does not delete a role when the confirmation is declined", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++    vi.spyOn(window, "confirm").mockReturnValue(false);
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const customRoleItem = screen.getAllByRole("listitem").find((item) => item.textContent?.includes("support"))!;
++    await user.click(within(customRoleItem).getByRole("button", { name: "Delete" }));
++
++    expect(api.roles.delete).not.toHaveBeenCalled();
++  });
++
++  it("grants a permission to a custom role when its checkbox is toggled on", async () => {
++    const user = userEvent.setup();
++    const matrixWithPartialGrant = {
++      ...SAMPLE_MATRIX,
++      roles: [SAMPLE_MATRIX.roles[0], { ...SAMPLE_MATRIX.roles[1], permission_ids: ["p1"] }],
++    };
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(matrixWithPartialGrant);
++    vi.mocked(api.roles.grantPermission).mockResolvedValue({ ...matrixWithPartialGrant.roles[1], permission_ids: ["p1", "p2"] });
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const customRoleItem = screen.getAllByRole("listitem").find((item) => item.textContent?.includes("support"))!;
++    await user.click(within(customRoleItem).getByRole("button", { name: "Edit permissions" }));
++
++    // support only has p1 granted here, so p2's checkbox is the unchecked one.
++    const checkboxes = within(customRoleItem).getAllByRole("checkbox");
++    const uncheckedBox = checkboxes.find((box) => !(box as HTMLInputElement).checked)!;
++    await user.click(uncheckedBox);
++
++    await waitFor(() => {
++      expect(api.roles.grantPermission).toHaveBeenCalledWith("r2", "p2");
++    });
++  });
++
++  it("disables permission checkboxes for a system role", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.roles.getPermissionMatrix).mockResolvedValue(SAMPLE_MATRIX);
++
++    render(<RolesPage />);
++    await screen.findByRole("table");
++
++    const systemRoleItem = screen.getAllByRole("listitem").find((item) => item.textContent?.includes("member"))!;
++    await user.click(within(systemRoleItem).getByRole("button", { name: "Edit permissions" }));
++
++    for (const checkbox of within(systemRoleItem).getAllByRole("checkbox")) {
++      expect(checkbox).toBeDisabled();
++    }
++  });
+ });
+diff --git a/apps/web/src/pages/__tests__/SettingsPage.test.tsx b/apps/web/src/pages/__tests__/SettingsPage.test.tsx
+index 853ce17..357cdc9 100644
+--- a/apps/web/src/pages/__tests__/SettingsPage.test.tsx
++++ b/apps/web/src/pages/__tests__/SettingsPage.test.tsx
+@@ -1,4 +1,4 @@
+-import { render, screen } from "@testing-library/react";
++import { render, screen, waitFor } from "@testing-library/react";
+ import userEvent from "@testing-library/user-event";
+ import { beforeEach, describe, expect, it, vi } from "vitest";
+ 
+@@ -15,6 +15,14 @@ vi.mock("../../auth/AuthContext", () => ({
+ vi.mock("../../api/apiClient", () => ({
+   api: {
+     organizations: { get: vi.fn(), update: vi.fn(), updateSettings: vi.fn() },
++    auth: {
++      getMyProfile: vi.fn(),
++      startTotpEnrollment: vi.fn(),
++      confirmTotpEnrollment: vi.fn(),
++      disableMfa: vi.fn(),
++      listSessions: vi.fn(),
++      revokeSession: vi.fn(),
++    },
+   },
+ }));
+ 
+@@ -26,9 +34,20 @@ const SAMPLE_ORG = {
+   description: null, logo_url: null,
+ };
+ 
++const SAMPLE_SESSION = {
++  id: "s1", device_label: "Chrome on macOS", ip_address: "203.0.113.4",
++  created_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-08T00:00:00Z", is_current: false,
++};
++
+ beforeEach(() => {
+   vi.mocked(api.organizations.get).mockReset();
+   vi.mocked(api.organizations.update).mockReset();
++  vi.mocked(api.auth.getMyProfile).mockReset();
++  vi.mocked(api.auth.startTotpEnrollment).mockReset();
++  vi.mocked(api.auth.confirmTotpEnrollment).mockReset();
++  vi.mocked(api.auth.disableMfa).mockReset();
++  vi.mocked(api.auth.listSessions).mockReset();
++  vi.mocked(api.auth.revokeSession).mockReset();
+ });
+ 
+ describe("SettingsPage", () => {
+@@ -79,15 +98,104 @@ describe("SettingsPage", () => {
+     expect(await screen.findByText("Failed to save changes.")).toBeInTheDocument();
+   });
+ 
+-  it("shows a coming-soon placeholder for the Security section", async () => {
++  it("shows MFA as disabled and lets the user start enrollment", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
++    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
++      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false,
++    });
++    vi.mocked(api.auth.listSessions).mockResolvedValue([SAMPLE_SESSION]);
++    vi.mocked(api.auth.startTotpEnrollment).mockResolvedValue({
++      factor_id: "f1", secret: "JBSWY3DPEHPK3PXP", provisioning_uri: "otpauth://totp/GuildDesk",
++    });
++
++    render(<SettingsPage />);
++    await screen.findByDisplayValue("Acme Guild");
++    await user.click(screen.getByRole("button", { name: "Security" }));
++
++    expect(await screen.findByText("disabled")).toBeInTheDocument();
++    await user.click(screen.getByRole("button", { name: "Enable two-factor authentication" }));
++
++    expect(await screen.findByText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
++  });
++
++  it("confirms TOTP enrollment with a code and shows recovery codes", async () => {
+     const user = userEvent.setup();
+     vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
++    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
++      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false,
++    });
++    vi.mocked(api.auth.listSessions).mockResolvedValue([]);
++    vi.mocked(api.auth.startTotpEnrollment).mockResolvedValue({
++      factor_id: "f1", secret: "JBSWY3DPEHPK3PXP", provisioning_uri: "otpauth://totp/GuildDesk",
++    });
++    vi.mocked(api.auth.confirmTotpEnrollment).mockResolvedValue({ recovery_codes: ["AAAA-1111", "BBBB-2222"] });
+ 
+     render(<SettingsPage />);
+     await screen.findByDisplayValue("Acme Guild");
++    await user.click(screen.getByRole("button", { name: "Security" }));
++    await user.click(await screen.findByRole("button", { name: "Enable two-factor authentication" }));
++    await user.type(screen.getByLabelText(/6-digit code/i), "123456");
++    await user.click(screen.getByRole("button", { name: "Confirm" }));
++
++    expect(await screen.findByText("AAAA-1111")).toBeInTheDocument();
++    expect(api.auth.confirmTotpEnrollment).toHaveBeenCalledWith("f1", "123456");
++  });
++
++  it("shows MFA as enabled and lets the user disable it after confirmation", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
++    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
++      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: true,
++    });
++    vi.mocked(api.auth.listSessions).mockResolvedValue([]);
++    vi.mocked(api.auth.disableMfa).mockResolvedValue(undefined);
++    vi.spyOn(window, "confirm").mockReturnValue(true);
+ 
++    render(<SettingsPage />);
++    await screen.findByDisplayValue("Acme Guild");
++    await user.click(screen.getByRole("button", { name: "Security" }));
++
++    expect(await screen.findByText("enabled")).toBeInTheDocument();
++    await user.click(screen.getByRole("button", { name: "Disable two-factor authentication" }));
++
++    await waitFor(() => expect(api.auth.disableMfa).toHaveBeenCalled());
++    expect(await screen.findByText("disabled")).toBeInTheDocument();
++  });
++
++  it("lists active sessions and revokes one after confirmation", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
++    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
++      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false,
++    });
++    vi.mocked(api.auth.listSessions).mockResolvedValue([SAMPLE_SESSION]);
++    vi.mocked(api.auth.revokeSession).mockResolvedValue(undefined);
++    vi.spyOn(window, "confirm").mockReturnValue(true);
++
++    render(<SettingsPage />);
++    await screen.findByDisplayValue("Acme Guild");
++    await user.click(screen.getByRole("button", { name: "Security" }));
++
++    expect(await screen.findByText("Chrome on macOS")).toBeInTheDocument();
++    await user.click(screen.getByRole("button", { name: "Revoke" }));
++
++    await waitFor(() => expect(api.auth.revokeSession).toHaveBeenCalledWith("s1"));
++    expect(screen.queryByText("Chrome on macOS")).not.toBeInTheDocument();
++  });
++
++  it("shows an empty state when there are no active sessions", async () => {
++    const user = userEvent.setup();
++    vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
++    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
++      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false,
++    });
++    vi.mocked(api.auth.listSessions).mockResolvedValue([]);
++
++    render(<SettingsPage />);
++    await screen.findByDisplayValue("Acme Guild");
+     await user.click(screen.getByRole("button", { name: "Security" }));
+ 
+-    expect(await screen.findByText(/coming soon/i)).toBeInTheDocument();
++    expect(await screen.findByText("No active sessions.")).toBeInTheDocument();
+   });
+ });
+diff --git a/packages/api-client/src/auth.ts b/packages/api-client/src/auth.ts
+index 35b9ed6..51572f3 100644
+--- a/packages/api-client/src/auth.ts
++++ b/packages/api-client/src/auth.ts
+@@ -42,6 +42,25 @@ export interface UserProfile {
+   mfa_enabled: boolean;
+ }
+ 
++export interface Session {
++  id: string;
++  device_label: string;
++  ip_address: string;
++  created_at: string;
++  expires_at: string;
++  is_current: boolean;
++}
++
++export interface TotpEnrollment {
++  factor_id: string;
++  secret: string;
++  provisioning_uri: string;
++}
++
++export interface RecoveryCodes {
++  recovery_codes: string[];
++}
++
+ function isMfaChallenge(result: TokenResponse | (MfaChallenge & { mfa_required: true })): result is MfaChallenge & {
+   mfa_required: true;
+ } {
+@@ -85,5 +104,38 @@ export function createAuthApi(client: ApiClient) {
+       const response = await client.get<DataResponse<UserProfile>>("/api/v1/users/me");
+       return response.data;
+     },
++
++    async startTotpEnrollment(): Promise<TotpEnrollment> {
++      const response = await client.post<DataResponse<TotpEnrollment>>("/api/v1/users/me/mfa/totp/enroll");
++      return response.data;
++    },
++
++    async confirmTotpEnrollment(factorId: string, code: string): Promise<RecoveryCodes> {
++      const response = await client.post<DataResponse<RecoveryCodes>>("/api/v1/users/me/mfa/totp/confirm", {
++        factor_id: factorId,
++        code,
++      });
++      return response.data;
++    },
++
++    async regenerateRecoveryCodes(): Promise<RecoveryCodes> {
++      const response = await client.post<DataResponse<RecoveryCodes>>(
++        "/api/v1/users/me/mfa/recovery-codes/regenerate",
++      );
++      return response.data;
++    },
++
++    async disableMfa(): Promise<void> {
++      await client.post<void>("/api/v1/users/me/mfa/disable");
++    },
++
++    async listSessions(): Promise<Session[]> {
++      const response = await client.get<DataResponse<Session[]>>("/api/v1/auth/sessions");
++      return response.data;
++    },
++
++    async revokeSession(sessionId: string): Promise<void> {
++      await client.delete<void>(`/api/v1/auth/sessions/${sessionId}`);
++    },
+   };
+ }
+diff --git a/packages/api-client/src/client.ts b/packages/api-client/src/client.ts
+index fe74fa2..fb24cb9 100644
+--- a/packages/api-client/src/client.ts
++++ b/packages/api-client/src/client.ts
+@@ -73,4 +73,8 @@ export class ApiClient {
+   patch<T>(path: string, body?: unknown): Promise<T> {
+     return this.request<T>(path, { method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) });
+   }
++
++  delete<T>(path: string): Promise<T> {
++    return this.request<T>(path, { method: "DELETE" });
++  }
+ }
+diff --git a/packages/api-client/src/index.ts b/packages/api-client/src/index.ts
+index 5e1b9c0..a772b5c 100644
+--- a/packages/api-client/src/index.ts
++++ b/packages/api-client/src/index.ts
+@@ -1,5 +1,6 @@
+ import { ApiClient, type ApiClientOptions } from "./client";
+ import { createAuthApi } from "./auth";
++import { createInvitationsApi } from "./invitations";
+ import { createOrganizationsApi } from "./organizations";
+ import { createRolesApi } from "./roles";
+ import { createTicketsApi } from "./tickets";
+@@ -7,6 +8,7 @@ import { createTicketsApi } from "./tickets";
+ export * from "./types";
+ export * from "./client";
+ export * from "./auth";
++export * from "./invitations";
+ export * from "./organizations";
+ export * from "./roles";
+ export * from "./tickets";
+@@ -16,6 +18,7 @@ export function createApiClient(options: ApiClientOptions) {
+   return {
+     client,
+     auth: createAuthApi(client),
++    invitations: createInvitationsApi(client),
+     organizations: createOrganizationsApi(client),
+     roles: createRolesApi(client),
+     tickets: createTicketsApi(client),
+diff --git a/packages/api-client/src/invitations.ts b/packages/api-client/src/invitations.ts
+new file mode 100644
+index 0000000..d47c0bb
+--- /dev/null
++++ b/packages/api-client/src/invitations.ts
+@@ -0,0 +1,51 @@
++import type { ApiClient } from "./client";
++import type { DataResponse } from "./types";
++
++// Mirrors app.identity.presentation.schemas — CreateInvitationRequest,
++// InvitationResponse. list_pending_invitations accepts page/page_size query
++// params but (unlike member search) returns a plain DataResponse<list>, not
++// a PagedResponse — the backend doesn't compute a total count for this list.
++
++export interface Invitation {
++  id: string;
++  org_id: string;
++  email: string;
++  role_id: string;
++  invited_by_user_id: string;
++  status: string;
++  created_at: string;
++  expires_at: string;
++}
++
++export interface ListInvitationsParams {
++  page?: number;
++  page_size?: number;
++}
++
++export function createInvitationsApi(client: ApiClient) {
++  return {
++    async listPending(orgId: string, params: ListInvitationsParams = {}): Promise<Invitation[]> {
++      const query = new URLSearchParams();
++      if (params.page !== undefined) query.set("page", String(params.page));
++      if (params.page_size !== undefined) query.set("page_size", String(params.page_size));
++
++      const queryString = query.toString();
++      const response = await client.get<DataResponse<Invitation[]>>(
++        `/api/v1/organizations/${orgId}/invitations${queryString ? `?${queryString}` : ""}`,
++      );
++      return response.data;
++    },
++
++    async create(orgId: string, email: string, roleId: string): Promise<Invitation> {
++      const response = await client.post<DataResponse<Invitation>>(
++        `/api/v1/organizations/${orgId}/invitations`,
++        { email, role_id: roleId },
++      );
++      return response.data;
++    },
++
++    async revoke(orgId: string, invitationId: string): Promise<void> {
++      await client.delete<void>(`/api/v1/organizations/${orgId}/invitations/${invitationId}`);
++    },
++  };
++}
+diff --git a/packages/api-client/src/roles.ts b/packages/api-client/src/roles.ts
+index f22289a..3b8dca0 100644
+--- a/packages/api-client/src/roles.ts
++++ b/packages/api-client/src/roles.ts
+@@ -47,6 +47,34 @@ export function createRolesApi(client: ApiClient) {
+       return response.data;
+     },
+ 
++    async create(name: string, description = ""): Promise<Role> {
++      const response = await client.post<DataResponse<Role>>("/api/v1/roles", { name, description });
++      return response.data;
++    },
++
++    async update(roleId: string, name: string): Promise<Role> {
++      const response = await client.patch<DataResponse<Role>>(`/api/v1/roles/${roleId}`, { name });
++      return response.data;
++    },
++
++    async delete(roleId: string): Promise<void> {
++      await client.delete<void>(`/api/v1/roles/${roleId}`);
++    },
++
++    async grantPermission(roleId: string, permissionId: string): Promise<Role> {
++      const response = await client.post<DataResponse<Role>>(`/api/v1/roles/${roleId}/permissions`, {
++        permission_id: permissionId,
++      });
++      return response.data;
++    },
++
++    async revokePermission(roleId: string, permissionId: string): Promise<Role> {
++      const response = await client.delete<DataResponse<Role>>(
++        `/api/v1/roles/${roleId}/permissions/${permissionId}`,
++      );
++      return response.data;
++    },
++
+     async assignToUser(userId: string, roleId: string): Promise<void> {
+       await client.post<void>("/api/v1/roles/assign", { user_id: userId, role_id: roleId });
+     },
+diff --git a/packages/api-client/tests/auth.test.ts b/packages/api-client/tests/auth.test.ts
+index 6080333..eec7eaa 100644
+--- a/packages/api-client/tests/auth.test.ts
++++ b/packages/api-client/tests/auth.test.ts
+@@ -3,14 +3,13 @@ import { ApiClient } from "../src/client";
+ import { createAuthApi } from "../src/auth";
+ 
+ function mockFetchOnce(body: unknown, status = 200) {
+-  vi.stubGlobal(
+-    "fetch",
+-    vi.fn().mockResolvedValue({
+-      status,
+-      ok: status >= 200 && status < 300,
+-      json: async () => body,
+-    } as Response),
+-  );
++  const fetchMock = vi.fn().mockResolvedValue({
++    status,
++    ok: status >= 200 && status < 300,
++    json: async () => body,
++  } as Response);
++  vi.stubGlobal("fetch", fetchMock);
++  return fetchMock;
+ }
+ 
+ afterEach(() => {
+@@ -77,4 +76,86 @@ describe("auth api", () => {
+ 
+     expect(profile.org_id).toBe("o1");
+   });
++
++  it("posts to the TOTP enroll endpoint with no body and unwraps the response", async () => {
++    const fetchMock = vi.fn().mockResolvedValue({
++      status: 200,
++      ok: true,
++      json: async () => ({ data: { factor_id: "f1", secret: "SECRET", provisioning_uri: "otpauth://…" } }),
++    } as Response);
++    vi.stubGlobal("fetch", fetchMock);
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const enrollment = await auth.startTotpEnrollment();
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/users/me/mfa/totp/enroll");
++    expect(init.method).toBe("POST");
++    expect(enrollment.factor_id).toBe("f1");
++  });
++
++  it("posts factor_id and code to confirm TOTP enrollment", async () => {
++    const fetchMock = vi.fn().mockResolvedValue({
++      status: 200,
++      ok: true,
++      json: async () => ({ data: { recovery_codes: ["ABC-123"] } }),
++    } as Response);
++    vi.stubGlobal("fetch", fetchMock);
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const codes = await auth.confirmTotpEnrollment("f1", "654321");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/users/me/mfa/totp/confirm");
++    expect(JSON.parse(init.body as string)).toEqual({ factor_id: "f1", code: "654321" });
++    expect(codes.recovery_codes).toEqual(["ABC-123"]);
++  });
++
++  it("posts to the recovery-codes regenerate endpoint", async () => {
++    mockFetchOnce({ data: { recovery_codes: ["NEW-1", "NEW-2"] } });
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const codes = await auth.regenerateRecoveryCodes();
++
++    expect(codes.recovery_codes).toEqual(["NEW-1", "NEW-2"]);
++  });
++
++  it("posts to the disable-MFA endpoint", async () => {
++    const fetchMock = mockFetchOnce(undefined, 204);
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    await auth.disableMfa();
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/users/me/mfa/disable");
++    expect(init.method).toBe("POST");
++  });
++
++  it("unwraps the DataResponse envelope for listSessions", async () => {
++    mockFetchOnce({
++      data: [
++        {
++          id: "s1", device_label: "Chrome on macOS", ip_address: "127.0.0.1",
++          created_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-08T00:00:00Z", is_current: false,
++        },
++      ],
++    });
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const sessions = await auth.listSessions();
++
++    expect(sessions).toHaveLength(1);
++    expect(sessions[0].device_label).toBe("Chrome on macOS");
++  });
++
++  it("sends a DELETE request when revoking a session", async () => {
++    const fetchMock = mockFetchOnce(undefined, 204);
++    const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    await auth.revokeSession("s1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/auth/sessions/s1");
++    expect(init.method).toBe("DELETE");
++  });
+ });
+diff --git a/packages/api-client/tests/client.test.ts b/packages/api-client/tests/client.test.ts
+index 0224717..feab96f 100644
+--- a/packages/api-client/tests/client.test.ts
++++ b/packages/api-client/tests/client.test.ts
+@@ -73,6 +73,18 @@ describe("ApiClient", () => {
+     });
+   });
+ 
++  it("sends a DELETE request and returns undefined for a 204 response", async () => {
++    const fetchMock = mockFetchOnce({ status: 204 });
++    const client = new ApiClient({ baseUrl: "http://api.test" });
++
++    const result = await client.delete<void>("/api/v1/roles/r1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles/r1");
++    expect(init.method).toBe("DELETE");
++    expect(result).toBeUndefined();
++  });
++
+   it("strips a trailing slash from the base URL", async () => {
+     const fetchMock = mockFetchOnce({ status: 200, body: {} });
+     const client = new ApiClient({ baseUrl: "http://api.test/" });
+diff --git a/packages/api-client/tests/invitations.test.ts b/packages/api-client/tests/invitations.test.ts
+new file mode 100644
+index 0000000..b8a3b88
+--- /dev/null
++++ b/packages/api-client/tests/invitations.test.ts
+@@ -0,0 +1,73 @@
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { ApiClient } from "../src/client";
++import { createInvitationsApi } from "../src/invitations";
++
++function mockFetchOnce(body: unknown, status = 200) {
++  const fetchMock = vi.fn().mockResolvedValue({
++    status,
++    ok: status >= 200 && status < 300,
++    json: async () => body,
++  } as Response);
++  vi.stubGlobal("fetch", fetchMock);
++  return fetchMock;
++}
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++});
++
++const SAMPLE_INVITATION = {
++  id: "i1",
++  org_id: "o1",
++  email: "new.hire@example.com",
++  role_id: "r1",
++  invited_by_user_id: "u1",
++  status: "pending",
++  created_at: "2026-01-01T00:00:00Z",
++  expires_at: "2026-01-08T00:00:00Z",
++};
++
++describe("invitations api", () => {
++  it("unwraps the DataResponse envelope for listPending", async () => {
++    mockFetchOnce({ data: [SAMPLE_INVITATION] });
++    const invitations = createInvitationsApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const result = await invitations.listPending("o1");
++
++    expect(result).toHaveLength(1);
++    expect(result[0].email).toBe("new.hire@example.com");
++  });
++
++  it("appends page and page_size query params when listing pending invitations", async () => {
++    const fetchMock = mockFetchOnce({ data: [] });
++    const invitations = createInvitationsApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    await invitations.listPending("o1", { page: 2, page_size: 10 });
++
++    const [url] = fetchMock.mock.calls[0] as [string];
++    expect(url).toBe("http://api.test/api/v1/organizations/o1/invitations?page=2&page_size=10");
++  });
++
++  it("posts email and role_id when creating an invitation", async () => {
++    const fetchMock = mockFetchOnce({ data: SAMPLE_INVITATION }, 201);
++    const invitations = createInvitationsApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const invitation = await invitations.create("o1", "new.hire@example.com", "r1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/organizations/o1/invitations");
++    expect(JSON.parse(init.body as string)).toEqual({ email: "new.hire@example.com", role_id: "r1" });
++    expect(invitation.id).toBe("i1");
++  });
++
++  it("sends a DELETE request when revoking an invitation", async () => {
++    const fetchMock = mockFetchOnce(undefined, 204);
++    const invitations = createInvitationsApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    await invitations.revoke("o1", "i1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/organizations/o1/invitations/i1");
++    expect(init.method).toBe("DELETE");
++  });
++});
+diff --git a/packages/api-client/tests/roles.test.ts b/packages/api-client/tests/roles.test.ts
+index bf459d5..47101e7 100644
+--- a/packages/api-client/tests/roles.test.ts
++++ b/packages/api-client/tests/roles.test.ts
+@@ -83,4 +83,72 @@ describe("roles api", () => {
+     expect(url).toBe("http://api.test/api/v1/roles/revoke");
+     expect(JSON.parse(init.body as string)).toEqual({ user_id: "u1", role_id: "r1" });
+   });
++
++  it("posts name and description to /roles when creating a role", async () => {
++    const fetchMock = mockFetchOnce({
++      data: { id: "r2", org_id: "o1", name: "Support", description: "Handles tickets", is_system_role: false, parent_role_id: null, permission_ids: [] },
++    }, 201);
++    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const role = await roles.create("Support", "Handles tickets");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles");
++    expect(JSON.parse(init.body as string)).toEqual({ name: "Support", description: "Handles tickets" });
++    expect(role.id).toBe("r2");
++  });
++
++  it("patches the role name when updating a role", async () => {
++    const fetchMock = mockFetchOnce({
++      data: { id: "r2", org_id: "o1", name: "Support Lead", description: "Handles tickets", is_system_role: false, parent_role_id: null, permission_ids: [] },
++    });
++    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const role = await roles.update("r2", "Support Lead");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles/r2");
++    expect(init.method).toBe("PATCH");
++    expect(JSON.parse(init.body as string)).toEqual({ name: "Support Lead" });
++    expect(role.name).toBe("Support Lead");
++  });
++
++  it("sends a DELETE request when deleting a role", async () => {
++    const fetchMock = mockFetchOnce(undefined, 204);
++    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    await roles.delete("r2");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles/r2");
++    expect(init.method).toBe("DELETE");
++  });
++
++  it("posts permission_id when granting a permission to a role", async () => {
++    const fetchMock = mockFetchOnce({
++      data: { id: "r2", org_id: "o1", name: "Support", description: "", is_system_role: false, parent_role_id: null, permission_ids: ["p1"] },
++    });
++    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const role = await roles.grantPermission("r2", "p1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles/r2/permissions");
++    expect(JSON.parse(init.body as string)).toEqual({ permission_id: "p1" });
++    expect(role.permission_ids).toEqual(["p1"]);
++  });
++
++  it("sends a DELETE request when revoking a permission from a role", async () => {
++    const fetchMock = mockFetchOnce({
++      data: { id: "r2", org_id: "o1", name: "Support", description: "", is_system_role: false, parent_role_id: null, permission_ids: [] },
++    });
++    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
++
++    const role = await roles.revokePermission("r2", "p1");
++
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
++    expect(url).toBe("http://api.test/api/v1/roles/r2/permissions/p1");
++    expect(init.method).toBe("DELETE");
++    expect(role.permission_ids).toEqual([]);
++  });
+ });
+diff --git a/services/platform/tests/identity/integration/test_invitation_flow.py b/services/platform/tests/identity/integration/test_invitation_flow.py
+index b756021..09724d4 100644
+--- a/services/platform/tests/identity/integration/test_invitation_flow.py
++++ b/services/platform/tests/identity/integration/test_invitation_flow.py
+@@ -8,6 +8,8 @@ test_registration_flow.py.
+ 
+ from __future__ import annotations
+ 
++import uuid
++
+ import secrets
+ 
+ import pytest
+@@ -34,7 +36,7 @@ _TOKEN_PEPPER = "change-me-in-production"
+ 
+ 
+ async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+@@ -45,7 +47,7 @@ async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
+     owner = User(
+         id=EntityId(new_uuid7()),
+         org_id=OrgId(org.id),
+-        email=Email(f"owner-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"owner-{uuid.uuid4().hex[:12]}@example.com"),
+         password_hash=PasswordHashingService().hash("Correct-Horse-Battery-9"),
+         status=UserStatus.ACTIVE,
+         display_name="Owner",
+@@ -69,7 +71,7 @@ def _service(uow) -> OrganizationInvitationService:
+ 
+ async def test_invite_then_accept_provisions_user_and_assigns_role(uow) -> None:
+     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
+-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
++    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
+ 
+     raw_token = secrets.token_urlsafe(32)
+     invitation = OrganizationInvitation.create(
+@@ -116,7 +118,7 @@ async def test_invite_member_rejects_already_registered_email(uow) -> None:
+ async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
+     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
+     service = _service(uow)
+-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
++    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
+ 
+     first = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+     second = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+@@ -131,7 +133,7 @@ async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
+ async def test_revoke_invitation_marks_it_revoked(uow) -> None:
+     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
+     service = _service(uow)
+-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
++    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
+ 
+     invitation = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+     await service.revoke_invitation(org_id=org_id, invitation_id=invitation.id, actor_user_id=owner_id)
+@@ -143,7 +145,7 @@ async def test_revoke_invitation_marks_it_revoked(uow) -> None:
+ async def test_list_pending_returns_the_invite(uow) -> None:
+     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
+     service = _service(uow)
+-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
++    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
+ 
+     await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+ 
+diff --git a/services/platform/tests/identity/integration/test_invitation_repository.py b/services/platform/tests/identity/integration/test_invitation_repository.py
+index 2a43d98..e07abef 100644
+--- a/services/platform/tests/identity/integration/test_invitation_repository.py
++++ b/services/platform/tests/identity/integration/test_invitation_repository.py
+@@ -1,3 +1,5 @@
++import uuid
++
+ import pytest
+ 
+ from app.identity.domain.entities import User, UserStatus
+@@ -17,7 +19,7 @@ async def _seed_org_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
+     # OrganizationManagementService.register_organization_with_owner: these
+     # ORM models have no relationship() cascades, so SQLAlchemy won't
+     # auto-order cross-table INSERTs within a single flush.
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+@@ -28,7 +30,7 @@ async def _seed_org_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
+     inviter = User(
+         id=EntityId(new_uuid7()),
+         org_id=OrgId(org.id),
+-        email=Email(f"inviter-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"inviter-{uuid.uuid4().hex[:12]}@example.com"),
+         password_hash=PasswordHashingService().hash("Correct-Horse-Battery-9"),
+         status=UserStatus.ACTIVE,
+         display_name="Inviter",
+@@ -42,7 +44,7 @@ async def test_add_then_get_by_id_round_trips(uow) -> None:
+     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
+     invitation = OrganizationInvitation.create(
+         org_id=org_id,
+-        email=Email(f"invitee-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"invitee-{uuid.uuid4().hex[:12]}@example.com"),
+         role_id=role_id,
+         invited_by_user_id=inviter_id,
+         token_hash="hashed-token",
+@@ -61,7 +63,7 @@ async def test_get_by_token_hash_finds_the_invitation(uow) -> None:
+     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
+     invitation = OrganizationInvitation.create(
+         org_id=org_id,
+-        email=Email(f"invitee-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"invitee-{uuid.uuid4().hex[:12]}@example.com"),
+         role_id=role_id,
+         invited_by_user_id=inviter_id,
+         token_hash="a-unique-token-hash",
+@@ -77,7 +79,7 @@ async def test_get_by_token_hash_finds_the_invitation(uow) -> None:
+ 
+ async def test_get_pending_for_email_ignores_accepted_invitations(uow) -> None:
+     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
+-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
++    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
+     invitation = OrganizationInvitation.create(
+         org_id=org_id, email=Email(email), role_id=role_id, invited_by_user_id=inviter_id, token_hash="tok-1"
+     )
+@@ -97,14 +99,14 @@ async def test_list_pending_for_org_excludes_revoked(uow) -> None:
+     org_id, role_id, inviter_id = await _seed_org_and_role(uow)
+     pending = OrganizationInvitation.create(
+         org_id=org_id,
+-        email=Email(f"pending-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"pending-{uuid.uuid4().hex[:12]}@example.com"),
+         role_id=role_id,
+         invited_by_user_id=inviter_id,
+         token_hash="tok-pending",
+     )
+     revoked = OrganizationInvitation.create(
+         org_id=org_id,
+-        email=Email(f"revoked-{new_uuid7().hex[:8]}@example.com"),
++        email=Email(f"revoked-{uuid.uuid4().hex[:12]}@example.com"),
+         role_id=role_id,
+         invited_by_user_id=inviter_id,
+         token_hash="tok-revoked",
+diff --git a/services/platform/tests/identity/integration/test_login_flow.py b/services/platform/tests/identity/integration/test_login_flow.py
+new file mode 100644
+index 0000000..a1a20f6
+--- /dev/null
++++ b/services/platform/tests/identity/integration/test_login_flow.py
+@@ -0,0 +1,146 @@
++"""
++Integration coverage for the login + refresh flow against a real database.
++
++Login itself (org_id vs org_slug resolution, password verification) is
++already covered at the unit level against FakeUnitOfWork
++(tests/identity/unit/test_authentication_service.py) — these tests exist
++to catch anything only a real SQLAlchemy repository + Alembic schema could
++surface (mapper mistakes, unique constraints, session persistence), and to
++cover refresh-token issuance/rotation end-to-end, which nothing else does.
++"""
++
++from __future__ import annotations
++
++import uuid
++
++import pytest
++
++from app.identity.application.authentication import AuthenticationService
++from app.identity.domain.entities import User
++from app.identity.domain.exceptions import InvalidCredentialsError, SessionNotFoundError
++from app.identity.domain.organization import Organization
++from app.identity.domain.value_objects import Email
++from app.platform_core.events.dispatcher import EventDispatcher
++from app.platform_core.logging.audit_logger import AuditLogger
++from app.platform_core.security.hashing import PasswordHashingService
++from app.platform_core.security.token import JwtTokenService
++from app.platform_core.shared_kernel.types import OrgId, UserId
++from app.platform_core.shared_kernel.utils import new_uuid7
++from tests.identity.unit.fakes import FakeAuditRecordSink
++
++pytestmark = pytest.mark.asyncio
++
++_PASSWORD = "Correct-Horse-Battery-9"
++
++
++def _make_service(uow) -> AuthenticationService:
++    return AuthenticationService(
++        uow_factory=lambda: uow,
++        password_hasher=PasswordHashingService(),
++        token_service=JwtTokenService(signing_key="a" * 32),
++        dispatcher=EventDispatcher(),
++        audit_logger=AuditLogger(FakeAuditRecordSink()),
++    )
++
++
++async def _make_org_and_active_user(uow, *, slug: str, email: str) -> tuple[Organization, User]:
++    org = Organization.create(name="Acme", slug=slug, owner_user_id=UserId(new_uuid7()))
++    await uow.organizations.add(org)
++    user = User.register(
++        org_id=OrgId(org.id), email=Email(email), password_hash=PasswordHashingService().hash(_PASSWORD),
++        display_name="A User",
++    )
++    user.verify_email()
++    await uow.users.add(user)
++    await uow.commit()
++    return org, user
++
++
++async def test_login_with_org_id_against_real_database(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, _user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    service = _make_service(uow)
++
++    result = await service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++
++    assert result.tokens is not None
++    assert result.mfa_challenge_user_id is None
++
++
++async def test_login_with_org_slug_against_real_database(uow) -> None:
++    slug = f"acme-{uuid.uuid4().hex[:12]}"
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, _user = await _make_org_and_active_user(uow, slug=slug, email=email)
++    service = _make_service(uow)
++
++    result = await service.login(
++        org_slug=slug, email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++
++    assert result.tokens is not None
++    persisted_user = await uow.users.get_by_email(OrgId(org.id), email)
++    assert persisted_user is not None
++    assert persisted_user.org_id == org.id
++
++
++async def test_login_with_wrong_password_is_rejected_against_real_database(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, _user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    service = _make_service(uow)
++
++    with pytest.raises(InvalidCredentialsError):
++        await service.login(
++            org_id=OrgId(org.id), email=email, password="wrong-password",
++            ip_address="127.0.0.1", device_info=None, remember_me=False,
++        )
++
++
++async def test_refresh_token_issues_new_tokens_and_rotates_the_old_one(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, _user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    service = _make_service(uow)
++
++    login_result = await service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++    assert login_result.tokens is not None
++    original_refresh_token = login_result.tokens.refresh_token
++
++    refreshed = await service.refresh(raw_refresh_token=original_refresh_token)
++
++    # The access token JWT is deterministic given identical claims and a
++    # same-second timestamp, so it may legitimately be identical to the
++    # previous one — the meaningful rotation invariant is the refresh token
++    # changing and the old one being revoked (checked below).
++    assert refreshed.refresh_token != original_refresh_token
++
++    # Rotation must actually revoke the old refresh token — a leaked token
++    # that was already used should not still be usable.
++    with pytest.raises(SessionNotFoundError):
++        await service.refresh(raw_refresh_token=original_refresh_token)
++
++    # The new refresh token, in contrast, must still be valid.
++    refreshed_again = await service.refresh(raw_refresh_token=refreshed.refresh_token)
++    assert refreshed_again.refresh_token != refreshed.refresh_token
++
++
++async def test_logout_revokes_the_refresh_token_against_real_database(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, _user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    service = _make_service(uow)
++
++    login_result = await service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++    assert login_result.tokens is not None
++
++    await service.logout(raw_refresh_token=login_result.tokens.refresh_token)
++
++    with pytest.raises(SessionNotFoundError):
++        await service.refresh(raw_refresh_token=login_result.tokens.refresh_token)
+diff --git a/services/platform/tests/identity/integration/test_mfa_flow.py b/services/platform/tests/identity/integration/test_mfa_flow.py
+new file mode 100644
+index 0000000..8de11ef
+--- /dev/null
++++ b/services/platform/tests/identity/integration/test_mfa_flow.py
+@@ -0,0 +1,133 @@
++"""
++Integration coverage for the full MFA chain against a real database:
++enroll a TOTP factor, confirm it, then prove that a subsequent login stops
++at a challenge (never issues tokens directly) and that only a correct
++code — not an arbitrary one — completes it via verify_mfa_challenge.
++
++Nothing else in the suite exercises this chain end-to-end: the MFA unit
++tests use fakes, and the plain login integration tests
++(test_login_flow.py) intentionally use MFA-less users.
++"""
++
++from __future__ import annotations
++
++import uuid
++
++import pyotp
++import pytest
++
++from app.identity.application.authentication import AuthenticationService
++from app.identity.application.mfa import MfaService
++from app.identity.domain.entities import User
++from app.identity.domain.exceptions import InvalidMfaCodeError
++from app.identity.domain.organization import Organization
++from app.identity.domain.value_objects import Email
++from app.platform_core.events.dispatcher import EventDispatcher
++from app.platform_core.logging.audit_logger import AuditLogger
++from app.platform_core.security.encryption import FieldEncryptionService
++from app.platform_core.security.hashing import PasswordHashingService
++from app.platform_core.security.token import JwtTokenService
++from app.platform_core.shared_kernel.types import OrgId, UserId
++from app.platform_core.shared_kernel.utils import new_uuid7
++from cryptography.fernet import Fernet
++from tests.identity.unit.fakes import FakeAuditRecordSink
++
++pytestmark = pytest.mark.asyncio
++
++_PASSWORD = "Correct-Horse-Battery-9"
++
++
++def _make_services(uow) -> tuple[AuthenticationService, MfaService]:
++    auth_service = AuthenticationService(
++        uow_factory=lambda: uow,
++        password_hasher=PasswordHashingService(),
++        token_service=JwtTokenService(signing_key="a" * 32),
++        dispatcher=EventDispatcher(),
++        audit_logger=AuditLogger(FakeAuditRecordSink()),
++    )
++    mfa_service = MfaService(
++        uow_factory=lambda: uow,
++        encryption=FieldEncryptionService(Fernet.generate_key()),
++        dispatcher=EventDispatcher(),
++        authentication_service=auth_service,
++    )
++    return auth_service, mfa_service
++
++
++async def _make_org_and_active_user(uow, *, slug: str, email: str) -> tuple[Organization, User]:
++    org = Organization.create(name="Acme", slug=slug, owner_user_id=UserId(new_uuid7()))
++    await uow.organizations.add(org)
++    user = User.register(
++        org_id=OrgId(org.id), email=Email(email), password_hash=PasswordHashingService().hash(_PASSWORD),
++        display_name="A User",
++    )
++    user.verify_email()
++    await uow.users.add(user)
++    await uow.commit()
++    return org, user
++
++
++async def test_login_stops_at_a_challenge_once_mfa_is_enrolled_and_confirmed(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    auth_service, mfa_service = _make_services(uow)
++
++    enrollment = await mfa_service.start_totp_enrollment(user_id=user.id)
++    code = pyotp.TOTP(enrollment.secret).now()
++    await mfa_service.confirm_totp_enrollment(user_id=user.id, factor_id=enrollment.factor_id, code=code)
++
++    login_result = await auth_service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++
++    # The whole point of MFA: a correct password alone must never be
++    # enough to receive tokens once a factor is enrolled and confirmed.
++    assert login_result.tokens is None
++    assert login_result.mfa_challenge_user_id == user.id
++
++
++async def test_verify_mfa_challenge_with_the_correct_totp_code_issues_tokens(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    auth_service, mfa_service = _make_services(uow)
++
++    enrollment = await mfa_service.start_totp_enrollment(user_id=user.id)
++    setup_code = pyotp.TOTP(enrollment.secret).now()
++    await mfa_service.confirm_totp_enrollment(user_id=user.id, factor_id=enrollment.factor_id, code=setup_code)
++
++    login_result = await auth_service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++    assert login_result.mfa_challenge_user_id is not None
++
++    challenge_code = pyotp.TOTP(enrollment.secret).now()
++    tokens = await mfa_service.verify_mfa_challenge(
++        user_id=login_result.mfa_challenge_user_id, code=challenge_code,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++
++    assert tokens.access_token
++    assert tokens.refresh_token
++
++
++async def test_verify_mfa_challenge_rejects_an_incorrect_code(uow) -> None:
++    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
++    org, user = await _make_org_and_active_user(uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email)
++    auth_service, mfa_service = _make_services(uow)
++
++    enrollment = await mfa_service.start_totp_enrollment(user_id=user.id)
++    setup_code = pyotp.TOTP(enrollment.secret).now()
++    await mfa_service.confirm_totp_enrollment(user_id=user.id, factor_id=enrollment.factor_id, code=setup_code)
++
++    login_result = await auth_service.login(
++        org_id=OrgId(org.id), email=email, password=_PASSWORD,
++        ip_address="127.0.0.1", device_info=None, remember_me=False,
++    )
++
++    with pytest.raises(InvalidMfaCodeError):
++        await mfa_service.verify_mfa_challenge(
++            user_id=login_result.mfa_challenge_user_id, code="000000",
++            ip_address="127.0.0.1", device_info=None, remember_me=False,
++        )
+diff --git a/services/platform/tests/identity/integration/test_organization_repository.py b/services/platform/tests/identity/integration/test_organization_repository.py
+index 696b92d..100f164 100644
+--- a/services/platform/tests/identity/integration/test_organization_repository.py
++++ b/services/platform/tests/identity/integration/test_organization_repository.py
+@@ -1,3 +1,5 @@
++import uuid
++
+ import pytest
+ 
+ from app.identity.domain.organization import Organization
+@@ -8,7 +10,7 @@ pytestmark = pytest.mark.asyncio
+ 
+ 
+ async def test_add_then_get_by_id_round_trips(uow) -> None:
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+@@ -20,7 +22,7 @@ async def test_add_then_get_by_id_round_trips(uow) -> None:
+ 
+ 
+ async def test_get_by_slug_finds_the_organization(uow) -> None:
+-    slug = f"acme-{new_uuid7().hex[:8]}"
++    slug = f"acme-{uuid.uuid4().hex[:12]}"
+     org = Organization.create(name="Acme", slug=slug, owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+@@ -32,7 +34,7 @@ async def test_get_by_slug_finds_the_organization(uow) -> None:
+ 
+ 
+ async def test_update_persists_settings_change(uow) -> None:
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+@@ -45,11 +47,11 @@ async def test_update_persists_settings_change(uow) -> None:
+ 
+ 
+ async def test_update_persists_slug_description_and_logo_url(uow) -> None:
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+-    new_slug = f"acme-corp-{new_uuid7().hex[:8]}"
++    new_slug = f"acme-corp-{uuid.uuid4().hex[:12]}"
+     org.change_slug(new_slug)
+     org.update_description("A widget company")
+     org.update_logo_url("https://cdn.example.com/logo.png")
+@@ -63,7 +65,7 @@ async def test_update_persists_slug_description_and_logo_url(uow) -> None:
+ 
+ 
+ async def test_a_new_organization_has_no_description_or_logo_by_default(uow) -> None:
+-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+     await uow.organizations.add(org)
+     await uow.session.flush()
+ 
+diff --git a/services/platform/tests/identity/integration/test_registration_flow.py b/services/platform/tests/identity/integration/test_registration_flow.py
+index d332bad..71e8fb4 100644
+--- a/services/platform/tests/identity/integration/test_registration_flow.py
++++ b/services/platform/tests/identity/integration/test_registration_flow.py
+@@ -8,6 +8,8 @@ integration time, not in the pure-domain unit tests.
+ 
+ from __future__ import annotations
+ 
++import uuid
++
+ import pytest
+ 
+ from app.identity.application.organization_management import OrganizationManagementService
+@@ -28,8 +30,8 @@ async def test_register_organization_with_owner_persists_both_aggregates(uow) ->
+ 
+     org_dto, owner_user_id = await service.register_organization_with_owner(
+         org_name="Acme",
+-        slug=f"acme-{new_uuid7().hex[:8]}",
+-        owner_email=f"owner-{new_uuid7().hex[:8]}@example.com",
++        slug=f"acme-{uuid.uuid4().hex[:12]}",
++        owner_email=f"owner-{uuid.uuid4().hex[:12]}@example.com",
+         owner_password="Correct-Horse-Battery-9",
+         owner_display_name="Owner",
+     )
+diff --git a/services/platform/tests/identity/integration/test_user_repository.py b/services/platform/tests/identity/integration/test_user_repository.py
+index 63ea741..87c9827 100644
+--- a/services/platform/tests/identity/integration/test_user_repository.py
++++ b/services/platform/tests/identity/integration/test_user_repository.py
+@@ -1,23 +1,36 @@
++import uuid
++
+ import pytest
+ 
+ from app.identity.domain.entities import User
++from app.identity.domain.organization import Organization
+ from app.identity.domain.value_objects import Email
+ from app.platform_core.api.sorting import SortField
+-from app.platform_core.shared_kernel.types import OrgId
++from app.platform_core.shared_kernel.types import OrgId, UserId
+ from app.platform_core.shared_kernel.utils import new_uuid7
+ 
+ pytestmark = pytest.mark.asyncio
+ 
+ 
++async def _seed_org(uow) -> OrgId:
++    # users.org_id is a real, non-deferrable foreign key to organizations.id
++    # (see alembic/versions/0001_identity_initial_schema.py) — a bare
++    # OrgId(new_uuid7()) with no matching row will always violate it.
++    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
++    await uow.organizations.add(org)
++    await uow.session.flush()
++    return OrgId(org.id)
++
++
+ def _member(org_id: OrgId, *, email: str, display_name: str) -> User:
+     return User.register(org_id=org_id, email=Email(email), password_hash="hash", display_name=display_name)
+ 
+ 
+ async def test_search_returns_only_that_orgs_members_with_a_total_count(uow) -> None:
+-    org_id = OrgId(new_uuid7())
+-    other_org_id = OrgId(new_uuid7())
+-    ours = _member(org_id, email=f"ours-{new_uuid7().hex[:8]}@example.com", display_name="Ours")
+-    theirs = _member(other_org_id, email=f"theirs-{new_uuid7().hex[:8]}@example.com", display_name="Theirs")
++    org_id = await _seed_org(uow)
++    other_org_id = await _seed_org(uow)
++    ours = _member(org_id, email=f"ours-{uuid.uuid4().hex[:12]}@example.com", display_name="Ours")
++    theirs = _member(other_org_id, email=f"theirs-{uuid.uuid4().hex[:12]}@example.com", display_name="Theirs")
+     await uow.users.add(ours)
+     await uow.users.add(theirs)
+     await uow.session.flush()
+@@ -29,9 +42,9 @@ async def test_search_returns_only_that_orgs_members_with_a_total_count(uow) ->
+ 
+ 
+ async def test_search_filters_by_status(uow) -> None:
+-    org_id = OrgId(new_uuid7())
+-    active = _member(org_id, email=f"active-{new_uuid7().hex[:8]}@example.com", display_name="Active")
+-    suspended = _member(org_id, email=f"suspended-{new_uuid7().hex[:8]}@example.com", display_name="Suspended")
++    org_id = await _seed_org(uow)
++    active = _member(org_id, email=f"active-{uuid.uuid4().hex[:12]}@example.com", display_name="Active")
++    suspended = _member(org_id, email=f"suspended-{uuid.uuid4().hex[:12]}@example.com", display_name="Suspended")
+     suspended.suspend(reason="test")
+     await uow.users.add(active)
+     await uow.users.add(suspended)
+@@ -44,8 +57,8 @@ async def test_search_filters_by_status(uow) -> None:
+ 
+ 
+ async def test_search_matches_query_against_display_name_or_email(uow) -> None:
+-    org_id = OrgId(new_uuid7())
+-    unique = new_uuid7().hex[:8]
++    org_id = await _seed_org(uow)
++    unique = uuid.uuid4().hex[:12]
+     alice = _member(org_id, email=f"alice-{unique}@example.com", display_name=f"Alice-{unique}")
+     bob = _member(org_id, email=f"bob-{unique}@example.com", display_name=f"Bob-{unique}")
+     await uow.users.add(alice)
+@@ -60,8 +73,8 @@ async def test_search_matches_query_against_display_name_or_email(uow) -> None:
+ 
+ 
+ async def test_search_sorts_by_the_requested_field(uow) -> None:
+-    org_id = OrgId(new_uuid7())
+-    unique = new_uuid7().hex[:8]
++    org_id = await _seed_org(uow)
++    unique = uuid.uuid4().hex[:12]
+     charlie = _member(org_id, email=f"c-{unique}@example.com", display_name=f"Charlie-{unique}")
+     alice = _member(org_id, email=f"a-{unique}@example.com", display_name=f"Alice-{unique}")
+     await uow.users.add(charlie)
+@@ -75,8 +88,8 @@ async def test_search_sorts_by_the_requested_field(uow) -> None:
+ 
+ 
+ async def test_search_paginates_with_offset_and_limit(uow) -> None:
+-    org_id = OrgId(new_uuid7())
+-    unique = new_uuid7().hex[:8]
++    org_id = await _seed_org(uow)
++    unique = uuid.uuid4().hex[:12]
+     for i in range(5):
+         await uow.users.add(_member(org_id, email=f"user{i}-{unique}@example.com", display_name=f"User{i}-{unique}"))
+     await uow.session.flush()
+-- 
+2.43.0
+

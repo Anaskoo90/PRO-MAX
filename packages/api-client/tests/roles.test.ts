@@ -83,4 +83,72 @@ describe("roles api", () => {
     expect(url).toBe("http://api.test/api/v1/roles/revoke");
     expect(JSON.parse(init.body as string)).toEqual({ user_id: "u1", role_id: "r1" });
   });
+
+  it("posts name and description to /roles when creating a role", async () => {
+    const fetchMock = mockFetchOnce({
+      data: { id: "r2", org_id: "o1", name: "Support", description: "Handles tickets", is_system_role: false, parent_role_id: null, permission_ids: [] },
+    }, 201);
+    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
+
+    const role = await roles.create("Support", "Handles tickets");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Support", description: "Handles tickets" });
+    expect(role.id).toBe("r2");
+  });
+
+  it("patches the role name when updating a role", async () => {
+    const fetchMock = mockFetchOnce({
+      data: { id: "r2", org_id: "o1", name: "Support Lead", description: "Handles tickets", is_system_role: false, parent_role_id: null, permission_ids: [] },
+    });
+    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
+
+    const role = await roles.update("r2", "Support Lead");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles/r2");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Support Lead" });
+    expect(role.name).toBe("Support Lead");
+  });
+
+  it("sends a DELETE request when deleting a role", async () => {
+    const fetchMock = mockFetchOnce(undefined, 204);
+    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
+
+    await roles.delete("r2");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles/r2");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("posts permission_id when granting a permission to a role", async () => {
+    const fetchMock = mockFetchOnce({
+      data: { id: "r2", org_id: "o1", name: "Support", description: "", is_system_role: false, parent_role_id: null, permission_ids: ["p1"] },
+    });
+    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
+
+    const role = await roles.grantPermission("r2", "p1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles/r2/permissions");
+    expect(JSON.parse(init.body as string)).toEqual({ permission_id: "p1" });
+    expect(role.permission_ids).toEqual(["p1"]);
+  });
+
+  it("sends a DELETE request when revoking a permission from a role", async () => {
+    const fetchMock = mockFetchOnce({
+      data: { id: "r2", org_id: "o1", name: "Support", description: "", is_system_role: false, parent_role_id: null, permission_ids: [] },
+    });
+    const roles = createRolesApi(new ApiClient({ baseUrl: "http://api.test" }));
+
+    const role = await roles.revokePermission("r2", "p1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles/r2/permissions/p1");
+    expect(init.method).toBe("DELETE");
+    expect(role.permission_ids).toEqual([]);
+  });
 });

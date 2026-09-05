@@ -8,6 +8,8 @@ test_registration_flow.py.
 
 from __future__ import annotations
 
+import uuid
+
 import secrets
 
 import pytest
@@ -34,7 +36,7 @@ _TOKEN_PEPPER = "change-me-in-production"
 
 
 async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
-    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
     await uow.organizations.add(org)
     await uow.session.flush()
 
@@ -45,7 +47,7 @@ async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
     owner = User(
         id=EntityId(new_uuid7()),
         org_id=OrgId(org.id),
-        email=Email(f"owner-{new_uuid7().hex[:8]}@example.com"),
+        email=Email(f"owner-{uuid.uuid4().hex[:12]}@example.com"),
         password_hash=PasswordHashingService().hash("Correct-Horse-Battery-9"),
         status=UserStatus.ACTIVE,
         display_name="Owner",
@@ -69,7 +71,7 @@ def _service(uow) -> OrganizationInvitationService:
 
 async def test_invite_then_accept_provisions_user_and_assigns_role(uow) -> None:
     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
+    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
     raw_token = secrets.token_urlsafe(32)
     invitation = OrganizationInvitation.create(
@@ -116,7 +118,7 @@ async def test_invite_member_rejects_already_registered_email(uow) -> None:
 async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
     service = _service(uow)
-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
+    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
     first = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
     second = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
@@ -131,7 +133,7 @@ async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
 async def test_revoke_invitation_marks_it_revoked(uow) -> None:
     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
     service = _service(uow)
-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
+    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
     invitation = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
     await service.revoke_invitation(org_id=org_id, invitation_id=invitation.id, actor_user_id=owner_id)
@@ -143,7 +145,7 @@ async def test_revoke_invitation_marks_it_revoked(uow) -> None:
 async def test_list_pending_returns_the_invite(uow) -> None:
     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
     service = _service(uow)
-    email = f"invitee-{new_uuid7().hex[:8]}@example.com"
+    email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
     await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
 

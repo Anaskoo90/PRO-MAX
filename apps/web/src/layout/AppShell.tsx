@@ -7,6 +7,7 @@ const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
   { to: "/tickets", label: "Tickets" },
   { to: "/members", label: "Members" },
   { to: "/roles", label: "Roles" },
+  { to: "/invitations", label: "Invitations" },
   { to: "/settings", label: "Settings" },
 ];
 

@@ -9,6 +9,7 @@ import { MembersPage } from "./pages/MembersPage";
 import { MemberDetailPage } from "./pages/MemberDetailPage";
 import { RolesPage } from "./pages/RolesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { InvitationsPage } from "./pages/InvitationsPage";
 
 export function App() {
   return (
@@ -23,6 +24,7 @@ export function App() {
               <Route path="members" element={<MembersPage />} />
               <Route path="members/:userId" element={<MemberDetailPage />} />
               <Route path="roles" element={<RolesPage />} />
+              <Route path="invitations" element={<InvitationsPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Route>

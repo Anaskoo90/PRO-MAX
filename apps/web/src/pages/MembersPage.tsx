@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ApiRequestError, type UserProfile } from "@guilddesk/api-client";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/apiClient";
+import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
 import { Pagination } from "../components/Pagination";
 import { StatusBadge } from "../components/StatusBadge";
 import styles from "./MembersPage.module.css";
@@ -31,6 +32,7 @@ export function MembersPage() {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     if (!orgId) return;
@@ -62,7 +64,7 @@ export function MembersPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [orgId, page, query, status]);
+  }, [orgId, page, query, status, reloadToken]);
 
   function handleQueryChange(next: string): void {
     setQuery(next);
@@ -99,12 +101,12 @@ export function MembersPage() {
         </label>
       </div>
 
-      {error && <p className={styles.error}>{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => setReloadToken((n) => n + 1)} />}
 
       {isLoading ? (
-        <p>Loading members…</p>
+        <LoadingState label="Loading members…" />
       ) : members.length === 0 ? (
-        <p>No members match these filters.</p>
+        <EmptyState message="No members match these filters." />
       ) : (
         <table className={styles.table}>
           <thead>

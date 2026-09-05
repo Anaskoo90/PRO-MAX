@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { ApiRequestError, type Role, type UserProfile } from "@guilddesk/api-client";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/apiClient";
+import { ErrorState, LoadingState } from "../components/AsyncState";
 import { StatusBadge } from "../components/StatusBadge";
 import styles from "./MemberDetailPage.module.css";
 
@@ -46,10 +47,10 @@ export function MemberDetailPage() {
       </Link>
       <h1>Member details</h1>
 
-      {error && <p className={styles.error}>{error}</p>}
+      {error && <ErrorState message={error} />}
 
       {isLoading ? (
-        <p>Loading…</p>
+        <LoadingState label="Loading member…" />
       ) : (
         member && (
           <div className={styles.card}>

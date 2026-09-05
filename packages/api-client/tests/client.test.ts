@@ -73,6 +73,18 @@ describe("ApiClient", () => {
     });
   });
 
+  it("sends a DELETE request and returns undefined for a 204 response", async () => {
+    const fetchMock = mockFetchOnce({ status: 204 });
+    const client = new ApiClient({ baseUrl: "http://api.test" });
+
+    const result = await client.delete<void>("/api/v1/roles/r1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://api.test/api/v1/roles/r1");
+    expect(init.method).toBe("DELETE");
+    expect(result).toBeUndefined();
+  });
+
   it("strips a trailing slash from the base URL", async () => {
     const fetchMock = mockFetchOnce({ status: 200, body: {} });
     const client = new ApiClient({ baseUrl: "http://api.test/" });

@@ -42,6 +42,25 @@ export interface UserProfile {
   mfa_enabled: boolean;
 }
 
+export interface Session {
+  id: string;
+  device_label: string;
+  ip_address: string;
+  created_at: string;
+  expires_at: string;
+  is_current: boolean;
+}
+
+export interface TotpEnrollment {
+  factor_id: string;
+  secret: string;
+  provisioning_uri: string;
+}
+
+export interface RecoveryCodes {
+  recovery_codes: string[];
+}
+
 function isMfaChallenge(result: TokenResponse | (MfaChallenge & { mfa_required: true })): result is MfaChallenge & {
   mfa_required: true;
 } {
@@ -84,6 +103,39 @@ export function createAuthApi(client: ApiClient) {
     async getMyProfile(): Promise<UserProfile> {
       const response = await client.get<DataResponse<UserProfile>>("/api/v1/users/me");
       return response.data;
+    },
+
+    async startTotpEnrollment(): Promise<TotpEnrollment> {
+      const response = await client.post<DataResponse<TotpEnrollment>>("/api/v1/users/me/mfa/totp/enroll");
+      return response.data;
+    },
+
+    async confirmTotpEnrollment(factorId: string, code: string): Promise<RecoveryCodes> {
+      const response = await client.post<DataResponse<RecoveryCodes>>("/api/v1/users/me/mfa/totp/confirm", {
+        factor_id: factorId,
+        code,
+      });
+      return response.data;
+    },
+
+    async regenerateRecoveryCodes(): Promise<RecoveryCodes> {
+      const response = await client.post<DataResponse<RecoveryCodes>>(
+        "/api/v1/users/me/mfa/recovery-codes/regenerate",
+      );
+      return response.data;
+    },
+
+    async disableMfa(): Promise<void> {
+      await client.post<void>("/api/v1/users/me/mfa/disable");
+    },
+
+    async listSessions(): Promise<Session[]> {
+      const response = await client.get<DataResponse<Session[]>>("/api/v1/auth/sessions");
+      return response.data;
+    },
+
+    async revokeSession(sessionId: string): Promise<void> {
+      await client.delete<void>(`/api/v1/auth/sessions/${sessionId}`);
     },
   };
 }

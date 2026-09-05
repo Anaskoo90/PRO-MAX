@@ -8,6 +8,8 @@ integration time, not in the pure-domain unit tests.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.identity.application.organization_management import OrganizationManagementService
@@ -28,8 +30,8 @@ async def test_register_organization_with_owner_persists_both_aggregates(uow) ->
 
     org_dto, owner_user_id = await service.register_organization_with_owner(
         org_name="Acme",
-        slug=f"acme-{new_uuid7().hex[:8]}",
-        owner_email=f"owner-{new_uuid7().hex[:8]}@example.com",
+        slug=f"acme-{uuid.uuid4().hex[:12]}",
+        owner_email=f"owner-{uuid.uuid4().hex[:12]}@example.com",
         owner_password="Correct-Horse-Battery-9",
         owner_display_name="Owner",
     )

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiRequestError, type TicketListItem } from "@guilddesk/api-client";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/apiClient";
+import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
 import { Pagination } from "../components/Pagination";
 import { StatusBadge } from "../components/StatusBadge";
 import styles from "./TicketsPage.module.css";
@@ -29,6 +30,7 @@ export function TicketsPage() {
   const [sort, setSort] = useState(SORT_OPTIONS[0].value);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     if (!orgId) return;
@@ -60,7 +62,7 @@ export function TicketsPage() {
     return () => {
       cancelled = true;
     };
-  }, [orgId, page, status, sort]);
+  }, [orgId, page, status, sort, reloadToken]);
 
   function handleStatusChange(next: StatusFilter): void {
     setStatus(next);
@@ -98,12 +100,12 @@ export function TicketsPage() {
         </label>
       </div>
 
-      {error && <p className={styles.error}>{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => setReloadToken((n) => n + 1)} />}
 
       {isLoading ? (
-        <p>Loading tickets…</p>
+        <LoadingState label="Loading tickets…" />
       ) : tickets.length === 0 ? (
-        <p>No tickets match these filters.</p>
+        <EmptyState message="No tickets match these filters." />
       ) : (
         <table className={styles.table}>
           <thead>

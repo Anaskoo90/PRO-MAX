@@ -1,0 +1,255 @@
+[33m0d38f83[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m feat: add web app, ticket system, Discord integration and organization features
+ .gitignore                                         |   10 [32m+[m
+ Taskfile.yml                                       |    6 [32m+[m
+ apps/web/.env.example                              |    1 [32m+[m
+ apps/web/.gitignore                                |   24 [32m+[m
+ apps/web/.oxlintrc.json                            |    8 [32m+[m
+ apps/web/README.md                                 |   32 [32m+[m
+ apps/web/index.html                                |   13 [32m+[m
+ apps/web/package.json                              |   34 [32m+[m
+ apps/web/public/favicon.svg                        |    1 [32m+[m
+ apps/web/public/icons.svg                          |   24 [32m+[m
+ apps/web/src/App.tsx                               |   33 [32m+[m
+ apps/web/src/api/apiClient.ts                      |   18 [32m+[m
+ apps/web/src/auth/AuthContext.tsx                  |  132 [32m++[m
+ apps/web/src/auth/LoginPage.module.css             |   63 [32m+[m
+ apps/web/src/auth/LoginPage.tsx                    |  114 [32m++[m
+ apps/web/src/auth/ProtectedRoute.tsx               |   15 [32m+[m
+ apps/web/src/auth/__tests__/LoginPage.test.tsx     |  122 [32m++[m
+ .../web/src/auth/__tests__/ProtectedRoute.test.tsx |   72 [32m+[m
+ apps/web/src/components/Pagination.module.css      |   25 [32m+[m
+ apps/web/src/components/Pagination.tsx             |   24 [32m+[m
+ apps/web/src/components/StatusBadge.module.css     |   40 [32m+[m
+ apps/web/src/components/StatusBadge.tsx            |   16 [32m+[m
+ apps/web/src/index.css                             |   66 [32m+[m
+ apps/web/src/layout/AppShell.module.css            |   79 [32m+[m
+ apps/web/src/layout/AppShell.tsx                   |   46 [32m+[m
+ apps/web/src/main.tsx                              |   10 [32m+[m
+ apps/web/src/pages/DashboardHomePage.tsx           |   12 [32m+[m
+ apps/web/src/pages/MemberDetailPage.module.css     |   61 [32m+[m
+ apps/web/src/pages/MemberDetailPage.tsx            |   88 [32m+[m
+ apps/web/src/pages/MembersPage.module.css          |   53 [32m+[m
+ apps/web/src/pages/MembersPage.tsx                 |  138 [32m++[m
+ apps/web/src/pages/RolesPage.module.css            |  123 [32m++[m
+ apps/web/src/pages/RolesPage.tsx                   |  210 [32m+++[m
+ apps/web/src/pages/SettingsPage.module.css         |  110 [32m++[m
+ apps/web/src/pages/SettingsPage.tsx                |  147 [32m++[m
+ apps/web/src/pages/TicketsPage.module.css          |   52 [32m+[m
+ apps/web/src/pages/TicketsPage.tsx                 |  137 [32m++[m
+ .../src/pages/__tests__/MemberDetailPage.test.tsx  |   75 [32m+[m
+ apps/web/src/pages/__tests__/MembersPage.test.tsx  |   98 [32m+[m
+ apps/web/src/pages/__tests__/RolesPage.test.tsx    |   84 [32m+[m
+ apps/web/src/pages/__tests__/SettingsPage.test.tsx |   93 [32m+[m
+ apps/web/src/pages/__tests__/TicketsPage.test.tsx  |  118 [32m++[m
+ apps/web/src/test/setup.ts                         |   11 [32m+[m
+ apps/web/tsconfig.app.json                         |   26 [32m+[m
+ apps/web/tsconfig.json                             |    7 [32m+[m
+ apps/web/tsconfig.node.json                        |   23 [32m+[m
+ apps/web/vite.config.ts                            |   11 [32m+[m
+ discord_bot/.env.example                           |    5 [32m+[m
+ discord_bot/client.py                              |   19 [32m+[m[31m-[m
+ discord_bot/cogs/setup.py                          |  113 [32m++[m
+ discord_bot/cogs/tickets.py                        |   90 [32m+[m[31m-[m
+ discord_bot/config.py                              |    8 [32m+[m
+ discord_bot/pyproject.toml                         |   10 [32m+[m
+ discord_bot/services/api_client.py                 |  283 [32m++[m[31m-[m
+ apps/web/.gitkeep => discord_bot/tests/__init__.py |    0
+ discord_bot/tests/test_api_client.py               |  135 [32m++[m
+ discord_bot/tests/test_permissions.py              |   47 [32m+[m
+ discord_bot/tests/test_setup_cog.py                |  155 [32m++[m
+ discord_bot/tests/test_setup_views.py              |   62 [32m+[m
+ discord_bot/tests/test_ticket_api_client.py        |  162 [32m++[m
+ discord_bot/tests/test_ticket_permissions.py       |   61 [32m+[m
+ discord_bot/tests/test_ticket_views.py             |  232 [32m+++[m
+ discord_bot/tests/test_tickets_cog.py              |  104 [32m++[m
+ discord_bot/utils/permissions.py                   |   38 [32m+[m
+ discord_bot/views/setup_views.py                   |   53 [32m+[m
+ discord_bot/views/ticket_views.py                  |  262 [32m++[m[31m-[m
+ packages/api-client/package.json                   |   18 [32m+[m
+ packages/api-client/src/auth.ts                    |   89 [32m+[m
+ packages/api-client/src/client.ts                  |   76 [32m+[m
+ packages/api-client/src/index.ts                   |   25 [32m+[m
+ packages/api-client/src/organizations.ts           |   76 [32m+[m
+ packages/api-client/src/roles.ts                   |   58 [32m+[m
+ packages/api-client/src/tickets.ts                 |   47 [32m+[m
+ packages/api-client/src/types.ts                   |   26 [32m+[m
+ packages/api-client/tests/auth.test.ts             |   80 [32m+[m
+ packages/api-client/tests/client.test.ts           |   85 [32m+[m
+ packages/api-client/tests/organizations.test.ts    |   94 [32m+[m
+ packages/api-client/tests/roles.test.ts            |   86 [32m+[m
+ packages/api-client/tests/tickets.test.ts          |   53 [32m+[m
+ packages/api-client/tsconfig.json                  |   16 [32m+[m
+ packages/api-client/vitest.config.ts               |    7 [32m+[m
+ pnpm-lock.yaml                                     | 1957 [32m++++++++++++++++++++[m
+ services/platform/.env.example                     |    5 [32m+[m[31m-[m
+ .../versions/0006_organization_invitations.py      |   64 [32m+[m
+ .../0007_discord_integration_initial_schema.py     |  121 [32m++[m
+ .../versions/0008_ticket_system_initial_schema.py  |  120 [32m++[m
+ .../0009_ticket_system_claim_and_categories.py     |   89 [32m+[m
+ .../0010_ticket_system_channel_id_index.py         |   34 [32m+[m
+ .../versions/0011_organization_profile_fields.py   |   28 [32m+[m
+ .../platform/app/discord_integration/__init__.py   |    0
+ .../discord_integration/application/__init__.py    |    0
+ .../application/authorization_helpers.py           |   24 [32m+[m
+ .../application/discord_setup.py                   |  229 [32m+++[m
+ .../app/discord_integration/application/dtos.py    |   34 [32m+[m
+ .../app/discord_integration/application/ports.py   |   50 [32m+[m
+ .../app/discord_integration/composition.py         |   68 [32m+[m
+ .../app/discord_integration/domain/__init__.py     |    0
+ .../app/discord_integration/domain/audit.py        |   64 [32m+[m
+ .../app/discord_integration/domain/entities.py     |  160 [32m++[m
+ .../app/discord_integration/domain/events.py       |   26 [32m+[m
+ .../app/discord_integration/domain/exceptions.py   |   51 [32m+[m
+ .../app/discord_integration/domain/repositories.py |   34 [32m+[m
+ .../discord_integration/infrastructure/__init__.py |    0
+ .../infrastructure/identity_adapter.py             |   31 [32m+[m
+ .../discord_integration/infrastructure/mappers.py  |   97 [32m+[m
+ .../infrastructure/orm_models.py                   |   97 [32m+[m
+ .../discord_integration/infrastructure/outbox.py   |   45 [32m+[m
+ .../infrastructure/repositories.py                 |  102 [32m+[m
+ .../infrastructure/seed_data.py                    |   14 [32m+[m
+ .../infrastructure/unit_of_work.py                 |   46 [32m+[m
+ .../discord_integration/presentation/__init__.py   |    0
+ .../presentation/bot_authentication.py             |   28 [32m+[m
+ .../discord_integration/presentation/bot_router.py |   78 [32m+[m
+ .../app/discord_integration/presentation/deps.py   |   26 [32m+[m
+ .../discord_integration/presentation/schemas.py    |   48 [32m+[m
+ .../presentation/setup_router.py                   |   83 [32m+[m
+ .../platform/app/discord_integration/settings.py   |   30 [32m+[m
+ .../app/identity/application/authentication.py     |   28 [32m+[m[31m-[m
+ services/platform/app/identity/application/dtos.py |   20 [32m+[m
+ .../application/organization_invitations.py        |  267 [32m+++[m
+ .../application/organization_management.py         |   56 [32m+[m[31m-[m
+ .../platform/app/identity/application/ports.py     |    2 [32m+[m
+ .../app/identity/application/rbac_management.py    |   30 [32m+[m[31m-[m
+ .../app/identity/application/team_management.py    |   51 [32m+[m[31m-[m
+ .../app/identity/application/user_management.py    |   29 [32m+[m[31m-[m
+ services/platform/app/identity/composition.py      |   13 [32m+[m[31m-[m
+ services/platform/app/identity/domain/events.py    |   22 [32m+[m
+ .../platform/app/identity/domain/exceptions.py     |    8 [32m+[m
+ .../platform/app/identity/domain/invitation.py     |  121 [32m++[m
+ .../platform/app/identity/domain/organization.py   |   17 [32m+[m
+ .../platform/app/identity/domain/repositories.py   |   25 [32m+[m
+ .../infrastructure/invitation_repository.py        |   61 [32m+[m
+ .../app/identity/infrastructure/mappers.py         |   41 [32m+[m
+ .../app/identity/infrastructure/orm_models.py      |   29 [32m+[m
+ .../app/identity/infrastructure/repositories.py    |   42 [32m+[m[31m-[m
+ .../app/identity/infrastructure/seed_data.py       |    3 [32m+[m
+ .../app/identity/infrastructure/unit_of_work.py    |    3 [32m+[m
+ .../app/identity/presentation/auth_router.py       |    1 [32m+[m
+ .../app/identity/presentation/authorization.py     |   16 [32m+[m
+ .../platform/app/identity/presentation/deps.py     |    5 [32m+[m
+ .../identity/presentation/invitations_router.py    |  118 [32m++[m
+ .../identity/presentation/organizations_router.py  |  101 [32m+[m[31m-[m
+ .../app/identity/presentation/rbac_router.py       |   51 [32m+[m[31m-[m
+ .../platform/app/identity/presentation/schemas.py  |   59 [32m+[m[31m-[m
+ .../app/identity/presentation/teams_router.py      |   31 [32m+[m[31m-[m
+ .../app/identity/presentation/users_router.py      |   22 [32m+[m[31m-[m
+ services/platform/app/main.py                      |   28 [32m+[m[31m-[m
+ .../app/platform_core/configuration/settings.py    |   17 [32m+[m[31m-[m
+ .../projects/application/template_management.py    |    7 [32m+[m
+ .../projects/application/workspace_management.py   |   15 [32m+[m
+ .../app/projects/presentation/templates_router.py  |    8 [32m+[m[31m-[m
+ .../app/projects/presentation/workspaces_router.py |   11 [32m+[m[31m-[m
+ services/platform/app/ticket_system/__init__.py    |    0
+ .../app/ticket_system/application/__init__.py      |    0
+ .../application/authorization_helpers.py           |   23 [32m+[m
+ .../platform/app/ticket_system/application/dtos.py |   37 [32m+[m
+ .../app/ticket_system/application/ports.py         |   48 [32m+[m
+ .../ticket_system/application/ticket_categories.py |  121 [32m++[m
+ .../ticket_system/application/ticket_lifecycle.py  |  285 [32m+++[m
+ services/platform/app/ticket_system/composition.py |   83 [32m+[m
+ .../platform/app/ticket_system/domain/__init__.py  |    0
+ .../platform/app/ticket_system/domain/audit.py     |   64 [32m+[m
+ .../platform/app/ticket_system/domain/entities.py  |  221 [32m+++[m
+ .../platform/app/ticket_system/domain/events.py    |   40 [32m+[m
+ .../app/ticket_system/domain/exceptions.py         |   39 [32m+[m
+ .../app/ticket_system/domain/repositories.py       |   51 [32m+[m
+ .../app/ticket_system/domain/value_objects.py      |   26 [32m+[m
+ .../app/ticket_system/infrastructure/__init__.py   |    0
+ .../infrastructure/discord_integration_adapter.py  |   25 [32m+[m
+ .../app/ticket_system/infrastructure/mappers.py    |  106 [32m++[m
+ .../app/ticket_system/infrastructure/orm_models.py |  124 [32m++[m
+ .../app/ticket_system/infrastructure/outbox.py     |   45 [32m+[m
+ .../ticket_system/infrastructure/repositories.py   |  179 [32m++[m
+ .../app/ticket_system/infrastructure/seed_data.py  |   19 [32m+[m
+ .../ticket_system/infrastructure/unit_of_work.py   |   46 [32m+[m
+ .../app/ticket_system/presentation/__init__.py     |    0
+ .../app/ticket_system/presentation/deps.py         |   33 [32m+[m
+ .../app/ticket_system/presentation/schemas.py      |  116 [32m++[m
+ .../presentation/ticket_bot_router.py              |  171 [32m++[m
+ .../presentation/ticket_categories_router.py       |   81 [32m+[m
+ .../ticket_system/presentation/tickets_router.py   |  204 [32m++[m
+ services/platform/deps.txt                         |  Bin [31m0[m -> [32m4686[m bytes
+ .../platform/tests/discord_integration/__init__.py |    0
+ .../tests/discord_integration/api/__init__.py      |    0
+ .../discord_integration/api/test_auth_guard.py     |   85 [32m+[m
+ .../discord_integration/integration/__init__.py    |    0
+ .../discord_integration/integration/conftest.py    |   37 [32m+[m
+ .../integration/test_guild_link_repository.py      |  129 [32m++[m
+ .../tests/discord_integration/unit/__init__.py     |    0
+ .../tests/discord_integration/unit/fakes.py        |  109 [32m++[m
+ .../unit/test_discord_setup_service.py             |  293 [32m+++[m
+ .../unit/test_guild_link_domain.py                 |   88 [32m+[m
+ .../identity/api/test_health_and_auth_guard.py     |   90 [32m+[m[31m-[m
+ .../identity/integration/test_invitation_flow.py   |  151 [32m++[m
+ .../integration/test_invitation_repository.py      |  121 [32m++[m
+ .../integration/test_organization_repository.py    |   28 [32m+[m
+ .../identity/integration/test_user_repository.py   |   89 [32m+[m
+ services/platform/tests/identity/unit/fakes.py     |   87 [32m+[m[31m-[m
+ .../identity/unit/test_authentication_service.py   |  110 [32m++[m
+ .../tests/identity/unit/test_invitation.py         |   73 [32m+[m
+ .../tests/identity/unit/test_organization.py       |   35 [32m+[m
+ .../unit/test_organization_management_service.py   |  207 [32m+++[m
+ .../identity/unit/test_rbac_management_service.py  |  181 [32m++[m
+ .../tests/identity/unit/test_team_management.py    |   94 [32m+[m
+ .../tests/identity/unit/test_token_security.py     |   10 [32m+[m[31m-[m
+ .../platform/tests/platform_core/test_security.py  |   22 [32m+[m
+ .../platform/tests/projects/api/test_auth_guard.py |   29 [32m+[m[31m-[m
+ .../projects/unit/test_read_tenant_isolation.py    |   42 [32m+[m
+ services/platform/tests/ticket_system/__init__.py  |    0
+ .../platform/tests/ticket_system/api/__init__.py   |    0
+ .../tests/ticket_system/api/test_auth_guard.py     |  173 [32m++[m
+ .../tests/ticket_system/integration/__init__.py    |    0
+ .../tests/ticket_system/integration/conftest.py    |   37 [32m+[m
+ .../integration/test_ticket_category_repository.py |   89 [32m+[m
+ .../integration/test_ticket_repository.py          |  353 [32m++++[m
+ .../platform/tests/ticket_system/unit/__init__.py  |    0
+ .../platform/tests/ticket_system/unit/fakes.py     |  157 [32m++[m
+ .../unit/test_ticket_category_domain.py            |   28 [32m+[m
+ .../unit/test_ticket_category_service.py           |  200 [32m++[m
+ .../tests/ticket_system/unit/test_ticket_domain.py |  171 [32m++[m
+ .../unit/test_ticket_lifecycle_service.py          |  534 [32m++++++[m
+ structure.txt                                      |  Bin [31m0[m -> [32m3780816[m bytes
+ uv.lock                                            |   12 [32m+[m
+ 223 files changed, 16534 insertions(+), 138 deletions(-)
+ apps/web/src/App.tsx                               |   2 [32m+[m
+ apps/web/src/auth/AuthContext.tsx                  |  48 [32m++++[m[31m-[m
+ .../web/src/auth/__tests__/ProtectedRoute.test.tsx |  40 [32m+++[m[31m-[m
+ apps/web/src/index.css                             |   2 [32m+[m
+ apps/web/src/layout/AppShell.tsx                   |   1 [32m+[m
+ apps/web/src/pages/DashboardHomePage.tsx           | 100 [32m++++++++[m[31m-[m
+ apps/web/src/pages/MemberDetailPage.tsx            |   5 [32m+[m[31m-[m
+ apps/web/src/pages/MembersPage.module.css          |   4 [31m-[m
+ apps/web/src/pages/MembersPage.tsx                 |  10 [32m+[m[31m-[m
+ apps/web/src/pages/RolesPage.module.css            | 113 [32m+++++++++[m[31m-[m
+ apps/web/src/pages/RolesPage.tsx                   | 232 [32m+++++++++++++++++++[m[31m--[m
+ apps/web/src/pages/SettingsPage.module.css         |  71 [32m++++++[m[31m-[m
+ apps/web/src/pages/SettingsPage.tsx                | 222 [32m+++++++++++++++++++[m[31m-[m
+ apps/web/src/pages/TicketsPage.module.css          |   4 [31m-[m
+ apps/web/src/pages/TicketsPage.tsx                 |  10 [32m+[m[31m-[m
+ apps/web/src/pages/__tests__/RolesPage.test.tsx    | 163 [32m++++++++++++++[m[31m-[m
+ apps/web/src/pages/__tests__/SettingsPage.test.tsx | 114 [32m+++++++++[m[31m-[m
+ packages/api-client/src/auth.ts                    |  52 [32m+++++[m
+ packages/api-client/src/client.ts                  |   4 [32m+[m
+ packages/api-client/src/index.ts                   |   3 [32m+[m
+ packages/api-client/src/roles.ts                   |  28 [32m+++[m
+ packages/api-client/tests/auth.test.ts             |  97 [32m++++++++[m[31m-[m
+ packages/api-client/tests/client.test.ts           |  12 [32m++[m
+ packages/api-client/tests/roles.test.ts            |  68 [32m++++++[m
+ .../identity/integration/test_invitation_flow.py   |  14 [32m+[m[31m-[m
+ .../integration/test_invitation_repository.py      |  16 [32m+[m[31m-[m
+ .../integration/test_organization_repository.py    |  14 [32m+[m[31m-[m
+ .../identity/integration/test_registration_flow.py |   6 [32m+[m[31m-[m
+ .../identity/integration/test_user_repository.py   |  41 [32m++[m[31m--[m
+ 29 files changed, 1380 insertions(+), 116 deletions(-)

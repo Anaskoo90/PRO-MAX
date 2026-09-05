@@ -42,10 +42,6 @@
   min-height: 160px;
 }
 
-.error {
-  color: var(--color-danger);
-}
-
 .success {
   color: var(--color-success);
 }
@@ -105,6 +101,71 @@
   cursor: not-allowed;
 }
 
-.comingSoon {
+.securityLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.securitySection h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.secretCode {
+  font-family: monospace;
+  font-size: 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  word-break: break-all;
+}
+
+.recoveryCodeList {
+  list-style: none;
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-family: monospace;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 4px;
+}
+
+.inlineActions {
+  display: flex;
+  gap: 8px;
+}
+
+.sessionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sessionItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.sessionDevice {
+  margin: 0;
+  font-weight: 600;
+}
+
+.sessionMeta {
+  margin: 2px 0 0;
+  font-size: 13px;
   color: var(--color-text-muted);
 }

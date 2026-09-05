@@ -47,6 +47,34 @@ export function createRolesApi(client: ApiClient) {
       return response.data;
     },
 
+    async create(name: string, description = ""): Promise<Role> {
+      const response = await client.post<DataResponse<Role>>("/api/v1/roles", { name, description });
+      return response.data;
+    },
+
+    async update(roleId: string, name: string): Promise<Role> {
+      const response = await client.patch<DataResponse<Role>>(`/api/v1/roles/${roleId}`, { name });
+      return response.data;
+    },
+
+    async delete(roleId: string): Promise<void> {
+      await client.delete<void>(`/api/v1/roles/${roleId}`);
+    },
+
+    async grantPermission(roleId: string, permissionId: string): Promise<Role> {
+      const response = await client.post<DataResponse<Role>>(`/api/v1/roles/${roleId}/permissions`, {
+        permission_id: permissionId,
+      });
+      return response.data;
+    },
+
+    async revokePermission(roleId: string, permissionId: string): Promise<Role> {
+      const response = await client.delete<DataResponse<Role>>(
+        `/api/v1/roles/${roleId}/permissions/${permissionId}`,
+      );
+      return response.data;
+    },
+
     async assignToUser(userId: string, roleId: string): Promise<void> {
       await client.post<void>("/api/v1/roles/assign", { user_id: userId, role_id: roleId });
     },
