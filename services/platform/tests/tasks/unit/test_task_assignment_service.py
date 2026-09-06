@@ -64,6 +64,42 @@ async def test_assign_creates_an_assignment_and_history_entry(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_assign_succeeds_even_when_no_notification_provider_is_configured(context) -> None:
+    """
+    Regression test for Bug #5: TaskAssignmentService.assign() used to
+    persist the assignment successfully and then let
+    NoProviderRegisteredError escape uncaught from _notify_assignee when
+    no email provider was configured, turning an already-successful write
+    into an API-level 500. A real (bare) NotificationDispatcher with no
+    providers registered reproduces the exact failure condition.
+    """
+    uow, project_context, task, actor_id, member_id = context
+    user_directory = FakeUserDirectory({member_id: UserSummary(id=member_id, email="member@example.com", display_name="Member")})
+    service = _make_service(
+        uow, project_context, user_directory=user_directory, notification_dispatcher=NotificationDispatcher(),
+    )
+
+    # Must not raise — this is exactly what used to bubble up as a 500.
+    assignment = await service.assign(task_id=task.id, actor_user_id=actor_id, assignee_user_id=member_id)
+
+    assert assignment.user_id == member_id
+    # And the assignment must be genuinely persisted, not silently skipped.
+    assert await uow.task_assignments.get(task.id, member_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_assign_still_raises_for_a_real_assignment_failure_regardless_of_notifications(context) -> None:
+    """The notification fix must not mask real failures: assigning the
+    same user twice must still raise, exactly as before."""
+    uow, project_context, task, actor_id, member_id = context
+    service = _make_service(uow, project_context, notification_dispatcher=NotificationDispatcher())
+    await service.assign(task_id=task.id, actor_user_id=actor_id, assignee_user_id=member_id)
+
+    with pytest.raises(TaskAlreadyAssignedError):
+        await service.assign(task_id=task.id, actor_user_id=actor_id, assignee_user_id=member_id)
+
+
+@pytest.mark.asyncio
 async def test_assigning_a_non_member_is_rejected(context) -> None:
     uow, project_context, task, actor_id, _member_id = context
     service = _make_service(uow, project_context)

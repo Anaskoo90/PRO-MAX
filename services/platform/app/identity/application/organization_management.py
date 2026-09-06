@@ -4,12 +4,15 @@ members, status.
 
 `register_organization_with_owner` is the platform's actual bootstrap
 entry point — resolves the chicken-and-egg between Organization (needs an
-owner_user_id) and User (needs an org_id, NOT NULL) by pre-generating both
-UUIDv7 ids and creating both aggregates in one transaction, rather than a
-two-request flow. This is also the only supported way to create an
-organization: there is still no separate user-invitation flow (standing
-gap, restated from the Platform Administrator Guide) — every other member
-joins via an admin-issued role assignment after the org exists.
+owner_user_id up front) and User.register() (needs an org_id up front, and
+must be used rather than the raw constructor so it records UserRegistered)
+by pre-generating a placeholder owner id to construct the Organization,
+then pointing it at the User's real generated id once User.register() has
+run, all within one transaction rather than a two-request flow. This is
+also the only supported way to create an organization: there is still no
+separate user-invitation flow (standing gap, restated from the Platform
+Administrator Guide) — every other member joins via an admin-issued role
+assignment after the org exists.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from uuid import UUID
 
 from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
-from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
+from app.identity.domain.entities import PasswordHistoryEntry, User
 from app.identity.domain.exceptions import (
     OrganizationNotFoundError,
     OrganizationSlugTakenError,
@@ -89,14 +92,22 @@ class OrganizationManagementService:
             org = Organization.create(name=org_name, slug=slug, owner_user_id=owner_user_id)
 
             password_hash = self._password_hasher.hash(owner_password)
-            owner = User(
-                id=EntityId(owner_user_id),
-                org_id=OrgId(org.id),
-                email=Email(owner_email),
-                password_hash=password_hash,
-                status=UserStatus.PENDING_VERIFICATION,
+            owner = User.register(
+                org_id=OrgId(org.id), email=Email(owner_email), password_hash=password_hash,
                 display_name=owner_display_name,
             )
+            # User.register() generates its own id (required so it can record
+            # UserRegistered correctly) which will not match the placeholder
+            # owner_user_id used above to construct `org` — Organization.create()
+            # and User.register() each require the other's id up front, a
+            # genuine circular dependency, so one placeholder is unavoidable.
+            # Point the org at the real user id before anything is persisted.
+            # This is a plain attribute fix-up for the still-in-progress
+            # creation, not an ownership change, so it intentionally does not
+            # go through transfer_ownership() (which would record a
+            # misleading "ownership transferred" event for something that
+            # never had a different real owner).
+            org.owner_user_id = owner.id
 
             # Flushed between each dependent add: org/user/password_history/
             # user_role_assignments have real FK chains (users.org_id ->
@@ -113,14 +124,14 @@ class OrganizationManagementService:
             owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
             if owner_role is not None:
                 await uow.user_role_assignments.add(
-                    UserRoleAssignment.create(user_id=owner_user_id, role_id=owner_role.id, org_id=OrgId(org.id))
+                    UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
                 )
 
-            events = org.pull_domain_events()
+            events = org.pull_domain_events() + owner.pull_domain_events()
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action="organization_created",
-                    actor_user_id=owner_user_id, resource_type="organization", resource_id=str(org.id),
+                    actor_user_id=owner.id, resource_type="organization", resource_id=str(org.id),
                 )
             )
             await uow.commit()

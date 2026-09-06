@@ -60,6 +60,7 @@ class WorkspaceService:
 
             workspace = Workspace.create(org_id=org_id, name=name, slug=slug, description=description)
             await uow.workspaces.add(workspace)
+            await uow.session.flush()
             await uow.workspace_memberships.add(
                 WorkspaceMembership.create(workspace_id=workspace.id, user_id=actor_user_id, role=WorkspaceRole.OWNER)
             )

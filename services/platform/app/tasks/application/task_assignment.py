@@ -16,7 +16,9 @@ see composition.py) to resolve their email.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
+    NoProviderRegisteredError,
     NotificationChannel,
     NotificationDispatcher,
     NotificationRequest,
@@ -50,6 +52,9 @@ def _history_to_dto(h: TaskAssignmentHistoryRecord) -> TaskAssignmentHistoryDTO:
     )
 
 
+_logger = get_logger("tasks.task_assignment")
+
+
 class TaskAssignmentService:
     def __init__(
         self, *, uow_factory, dispatcher: EventDispatcher, permission_checker: OrgPermissionCheckerPort,
@@ -69,13 +74,21 @@ class TaskAssignmentService:
         user = await self._user_directory.get_by_id(user_id=user_id)
         if user is None:
             return
-        await self._notification_dispatcher.dispatch(
-            NotificationRequest(
-                org_id=org_id, channel=NotificationChannel.EMAIL, recipient=user.email,
-                subject=f"You've been assigned to '{task_title}'",
-                body=f"You were assigned to the task '{task_title}'. Sign in to GuildDesk to view it.",
+        try:
+            await self._notification_dispatcher.dispatch(
+                NotificationRequest(
+                    org_id=org_id, channel=NotificationChannel.EMAIL, recipient=user.email,
+                    subject=f"You've been assigned to '{task_title}'",
+                    body=f"You were assigned to the task '{task_title}'. Sign in to GuildDesk to view it.",
+                )
             )
-        )
+        except NoProviderRegisteredError:
+            # Same situation as EmailVerificationService.send_verification:
+            # no email provider is wired in this environment. The
+            # assignment itself is already committed by the caller before
+            # this runs, so a missing notification provider must not turn
+            # an already-successful assignment into a 500.
+            await _logger.awarning("task_assignment_notify_skipped_no_provider", user_id=str(user_id))
 
     async def assign(
         self, *, task_id: EntityId, actor_user_id: UserId, assignee_user_id: UserId, is_primary: bool = False,

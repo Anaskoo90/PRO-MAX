@@ -140,6 +140,15 @@ class FakeOutboxWriter:
         pass
 
 
+class _FakeSession:
+    """Minimal stand-in for the real AsyncSession's flush(): fakes have no
+    real DB to order INSERTs against, so this is a no-op — it exists only
+    so fake and real ProjectsUnitOfWork expose the same interface shape."""
+
+    async def flush(self) -> None:
+        return None
+
+
 class FakeProjectsUnitOfWork:
     def __init__(self) -> None:
         self.workspaces = FakeWorkspaceRepository()
@@ -149,6 +158,7 @@ class FakeProjectsUnitOfWork:
         self.project_templates = FakeProjectTemplateRepository()
         self.audit_logs = FakeProjectsAuditLogRepository()
         self.outbox = FakeOutboxWriter()
+        self.session = _FakeSession()
 
     async def __aenter__(self) -> "FakeProjectsUnitOfWork":
         return self

@@ -93,6 +93,7 @@ class ProjectService:
                 settings=effective_settings, template_id=template_id,
             )
             await uow.projects.add(project)
+            await uow.session.flush()
             await uow.project_memberships.add(
                 ProjectMembership.add_directly(project_id=project.id, user_id=actor_user_id, role=ProjectRole.OWNER)
             )
