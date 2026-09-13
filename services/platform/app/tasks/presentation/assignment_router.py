@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.tasks.application.task_assignment import TaskAssignmentService
+from app.tasks.application.task_management import TaskService
 from app.tasks.presentation import deps
 from app.tasks.presentation.schemas import (
     AssignTaskRequest,
@@ -41,7 +42,9 @@ async def assign_task(
     request: AssignTaskRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskAssignmentService = Depends(deps.get_task_assignment_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskAssignmentResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     assignment = await service.assign(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, assignee_user_id=request.assignee_user_id,
         is_primary=request.is_primary,
@@ -52,8 +55,13 @@ async def assign_task(
 @router.get("/tasks/{task_id}/assignments", response_model=DataResponse[list[TaskAssignmentResponse]])
 async def list_task_assignments(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskAssignmentService = Depends(deps.get_task_assignment_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskAssignmentResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     assignments = await service.list_assignments(task_id=UUID(task_id))
     return DataResponse(data=[_to_response(a) for a in assignments])
 
@@ -64,7 +72,9 @@ async def unassign_task(
     user_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskAssignmentService = Depends(deps.get_task_assignment_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.unassign(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, assignee_user_id=UUID(user_id))
 
 
@@ -74,7 +84,9 @@ async def reassign_task(
     request: ReassignTaskRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskAssignmentService = Depends(deps.get_task_assignment_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskAssignmentResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     assignment = await service.reassign(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, from_user_id=request.from_user_id,
         to_user_id=request.to_user_id,
@@ -85,7 +97,12 @@ async def reassign_task(
 @router.get("/tasks/{task_id}/assignments/history", response_model=DataResponse[list[TaskAssignmentHistoryResponse]])
 async def list_task_assignment_history(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskAssignmentService = Depends(deps.get_task_assignment_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskAssignmentHistoryResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     history = await service.list_history(task_id=UUID(task_id))
     return DataResponse(data=[_history_response(h) for h in history])

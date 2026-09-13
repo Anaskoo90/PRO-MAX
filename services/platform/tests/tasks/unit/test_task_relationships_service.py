@@ -8,6 +8,7 @@ from app.tasks.domain.exceptions import (
     TaskCannotDependOnItselfError,
     TaskDependencyAlreadyExistsError,
     TaskDependencyCycleError,
+    TaskNotFoundError,
     TaskParentCycleError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
@@ -130,6 +131,27 @@ async def test_list_blocking_tasks_returns_the_dependency(context) -> None:
 
     assert len(blocking) == 1
     assert blocking[0].id == b.id
+
+
+@pytest.mark.asyncio
+async def test_relationships_reject_tasks_from_another_project(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    task = _seed_task(uow, project_id=project_id, org_id=org_id)
+    foreign = _seed_task(uow, project_id=EntityId(new_uuid7()), org_id=OrgId(new_uuid7()))
+    service = _make_service(uow, project_context)
+
+    with pytest.raises(TaskNotFoundError):
+        await service.set_parent(
+            task_id=task.id, actor_user_id=actor_id, parent_task_id=foreign.id
+        )
+    with pytest.raises(TaskNotFoundError):
+        await service.add_dependency(
+            task_id=task.id, actor_user_id=actor_id, depends_on_task_id=foreign.id
+        )
+    with pytest.raises(TaskNotFoundError):
+        await service.add_related_task(
+            task_id=task.id, actor_user_id=actor_id, related_task_id=foreign.id
+        )
 
 
 @pytest.mark.asyncio

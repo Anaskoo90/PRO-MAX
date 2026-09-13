@@ -61,6 +61,9 @@ class TaskRelationshipService:
             if parent_task_id is not None:
                 if parent_task_id == task_id:
                     raise TaskCannotBeOwnParentError()
+                parent = await uow.tasks.get_by_id(parent_task_id)
+                if parent is None or parent.project_id != task.project_id:
+                    raise TaskNotFoundError(parent_task_id)
                 cursor: EntityId | None = parent_task_id
                 visited: set[EntityId] = set()
                 while cursor is not None:
@@ -95,7 +98,8 @@ class TaskRelationshipService:
 
             if depends_on_task_id == task_id:
                 raise TaskCannotDependOnItselfError()
-            if await uow.tasks.get_by_id(depends_on_task_id) is None:
+            depends_on_task = await uow.tasks.get_by_id(depends_on_task_id)
+            if depends_on_task is None or depends_on_task.project_id != task.project_id:
                 raise TaskNotFoundError(depends_on_task_id)
             if await uow.task_dependencies.get(task_id, depends_on_task_id) is not None:
                 raise TaskDependencyAlreadyExistsError()
@@ -164,7 +168,8 @@ class TaskRelationshipService:
                 raise TaskNotFoundError(task_id)
             await self._authorization.assert_can_manage(project_id=task.project_id, org_id=task.org_id, user_id=actor_user_id)
 
-            if await uow.tasks.get_by_id(related_task_id) is None:
+            related_task = await uow.tasks.get_by_id(related_task_id)
+            if related_task is None or related_task.project_id != task.project_id:
                 raise TaskNotFoundError(related_task_id)
             if await uow.task_relations.get(task_id, related_task_id) is not None or await uow.task_relations.get(related_task_id, task_id) is not None:
                 raise TaskRelationAlreadyExistsError()

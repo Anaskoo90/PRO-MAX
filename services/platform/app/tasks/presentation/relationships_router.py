@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.tasks.application.task_relationships import TaskRelationshipService
+from app.tasks.application.task_management import TaskService
 from app.tasks.presentation import deps
 from app.tasks.presentation.schemas import (
     AddDependencyRequest,
@@ -39,7 +40,9 @@ async def set_task_parent(
     request: SetTaskParentRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.set_parent(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, parent_task_id=request.parent_task_id)
     return DataResponse(data=_task_response(task))
 
@@ -47,8 +50,13 @@ async def set_task_parent(
 @router.get("/tasks/{task_id}/subtasks", response_model=DataResponse[list[TaskResponse]])
 async def list_subtasks(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     subtasks = await service.list_subtasks(parent_task_id=UUID(task_id))
     return DataResponse(data=[_task_response(t) for t in subtasks])
 
@@ -59,7 +67,9 @@ async def add_dependency(
     request: AddDependencyRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskDependencyResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     dependency = await service.add_dependency(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, depends_on_task_id=request.depends_on_task_id
     )
@@ -74,7 +84,9 @@ async def remove_dependency(
     depends_on_task_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.remove_dependency(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, depends_on_task_id=UUID(depends_on_task_id)
     )
@@ -83,8 +95,13 @@ async def remove_dependency(
 @router.get("/tasks/{task_id}/blocked-by", response_model=DataResponse[list[TaskResponse]])
 async def list_blocking_tasks(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     tasks = await service.list_blocking_tasks(task_id=UUID(task_id))
     return DataResponse(data=[_task_response(t) for t in tasks])
 
@@ -92,8 +109,13 @@ async def list_blocking_tasks(
 @router.get("/tasks/{task_id}/is-blocked", response_model=DataResponse[bool])
 async def is_task_blocked(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[bool]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     blocked = await service.is_blocked(task_id=UUID(task_id))
     return DataResponse(data=blocked)
 
@@ -104,7 +126,9 @@ async def add_related_task(
     request: AddRelatedTaskRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskRelationResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     relation = await service.add_related_task(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, related_task_id=request.related_task_id
     )
@@ -117,7 +141,9 @@ async def remove_related_task(
     related_task_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.remove_related_task(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, related_task_id=UUID(related_task_id)
     )
@@ -126,7 +152,12 @@ async def remove_related_task(
 @router.get("/tasks/{task_id}/related", response_model=DataResponse[list[TaskResponse]])
 async def list_related_tasks(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskRelationshipService = Depends(deps.get_task_relationship_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     tasks = await service.list_related_tasks(task_id=UUID(task_id))
     return DataResponse(data=[_task_response(t) for t in tasks])

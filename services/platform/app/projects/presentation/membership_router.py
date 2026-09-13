@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.projects.application.membership_management import ProjectMembershipService
+from app.projects.application.project_management import ProjectService
 from app.projects.domain.entities import ProjectRole
 from app.projects.presentation import deps
 from app.projects.presentation.schemas import (
@@ -34,7 +35,9 @@ async def invite_project_member(
     request: InviteProjectMemberRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectMembershipService = Depends(deps.get_project_membership_service),
+    project_service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectMembershipResponse]:
+    await project_service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     membership = await service.invite_member_by_email(
         project_id=UUID(project_id), actor_user_id=claims.subject_user_id, email=request.email,
         role=ProjectRole(request.role),
@@ -47,7 +50,9 @@ async def accept_project_invite(
     project_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectMembershipService = Depends(deps.get_project_membership_service),
+    project_service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectMembershipResponse]:
+    await project_service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     membership = await service.accept_invite(project_id=UUID(project_id), user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(membership))
 
@@ -55,8 +60,13 @@ async def accept_project_invite(
 @router.get("/projects/{project_id}/members", response_model=DataResponse[list[ProjectMembershipResponse]])
 async def list_project_members(
     project_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectMembershipService = Depends(deps.get_project_membership_service),
+    project_service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[list[ProjectMembershipResponse]]:
+    await project_service.assert_can_view(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     memberships = await service.list_members(project_id=UUID(project_id))
     return DataResponse(data=[_to_response(m) for m in memberships])
 
@@ -68,7 +78,9 @@ async def change_project_member_role(
     request: ChangeProjectMemberRoleRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectMembershipService = Depends(deps.get_project_membership_service),
+    project_service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectMembershipResponse]:
+    await project_service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     membership = await service.change_member_role(
         project_id=UUID(project_id), actor_user_id=claims.subject_user_id, target_user_id=UUID(user_id),
         role=ProjectRole(request.role),
@@ -82,5 +94,7 @@ async def remove_project_member(
     user_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectMembershipService = Depends(deps.get_project_membership_service),
+    project_service: ProjectService = Depends(deps.get_project_service),
 ) -> None:
+    await project_service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     await service.remove_member(project_id=UUID(project_id), actor_user_id=claims.subject_user_id, target_user_id=UUID(user_id))

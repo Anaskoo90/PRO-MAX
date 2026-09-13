@@ -56,6 +56,17 @@ def test_create_project_without_authorization_header_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_project_reads_without_authorization_header_are_rejected() -> None:
+    resource_id = "00000000-0000-7000-8000-000000000000"
+
+    for path in (
+        f"/api/v1/workspaces/{resource_id}/projects",
+        f"/api/v1/projects/{resource_id}",
+        f"/api/v1/projects/{resource_id}/members",
+    ):
+        assert client.get(path).status_code == 401
+
+
 def test_invite_project_member_without_authorization_header_is_rejected() -> None:
     response = client.post(
         "/api/v1/projects/00000000-0000-7000-8000-000000000000/members/invite",

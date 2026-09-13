@@ -34,6 +34,22 @@ def test_start_sprint_without_authorization_header_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_board_reads_without_authorization_header_are_rejected() -> None:
+    resource_id = "00000000-0000-7000-8000-000000000000"
+
+    for path in (
+        f"/api/v1/projects/{resource_id}/boards",
+        f"/api/v1/boards/{resource_id}",
+        f"/api/v1/boards/{resource_id}/cards",
+        f"/api/v1/boards/{resource_id}/columns",
+        f"/api/v1/boards/{resource_id}/sprints",
+        f"/api/v1/boards/{resource_id}/backlog",
+        f"/api/v1/sprints/{resource_id}",
+        f"/api/v1/sprints/{resource_id}/burndown",
+    ):
+        assert client.get(path).status_code == 401
+
+
 def test_create_board_rejects_missing_required_fields() -> None:
     response = client.post(
         "/api/v1/projects/00000000-0000-7000-8000-000000000000/boards",

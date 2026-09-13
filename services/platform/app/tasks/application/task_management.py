@@ -47,12 +47,8 @@ class TaskService:
         priority: TaskPriority = TaskPriority.MEDIUM, parent_task_id: EntityId | None = None,
         start_date: datetime | None = None, due_date: datetime | None = None, reminder_date: datetime | None = None,
     ) -> TaskDTO:
-        # Tenant-isolation check: the caller's own org_id (from their JWT
-        # claims) must match the target project's org — otherwise a user
-        # could operate on another organization's project by guessing its
-        # id. Existing-task mutations below don't repeat this check; the
-        # project-membership lookup itself is the security boundary there,
-        # matching Projects & Workspaces' own established precedent.
+        # The JWT tenant must match the project's persisted tenant before
+        # either RBAC or project membership is considered.
         await self._authorization.assert_project_accessible(project_id=project_id, org_id=org_id)
         if not await self._authorization.can_manage(project_id=project_id, org_id=org_id, user_id=actor_user_id):
             raise InsufficientTaskPermissionError(("owner", "admin", "contributor"))
@@ -83,6 +79,32 @@ class TaskService:
             if task is None:
                 raise TaskNotFoundError(task_id)
             return _to_dto(task)
+
+    async def assert_project_belongs_to_org(self, *, project_id: EntityId, org_id: OrgId) -> None:
+        await self._authorization.assert_project_accessible(project_id=project_id, org_id=org_id)
+
+    async def assert_task_belongs_to_org(self, *, task_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            task = await uow.tasks.get_by_id(task_id)
+            if task is None:
+                raise TaskNotFoundError(task_id)
+            await self._authorization.assert_project_accessible(project_id=task.project_id, org_id=org_id)
+
+    async def assert_can_view_project(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        await self._authorization.assert_can_view(project_id=project_id, org_id=org_id, user_id=user_id)
+
+    async def assert_can_view_task(self, *, task_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        async with self._uow_factory() as uow:
+            task = await uow.tasks.get_by_id(task_id)
+            if task is None:
+                raise TaskNotFoundError(task_id)
+            await self._authorization.assert_can_view(
+                project_id=task.project_id, org_id=org_id, user_id=user_id
+            )
+
+    async def get_for_actor(self, *, task_id: EntityId, org_id: OrgId, user_id: UserId) -> TaskDTO:
+        await self.assert_can_view_task(task_id=task_id, org_id=org_id, user_id=user_id)
+        return await self.get(task_id=task_id)
 
     async def _load_and_authorize(self, uow, *, task_id: EntityId, actor_user_id: UserId) -> Task:
         task = await uow.tasks.get_by_id(task_id)

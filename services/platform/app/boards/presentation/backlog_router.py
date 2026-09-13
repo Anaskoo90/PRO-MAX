@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.boards.application.backlog_management import BacklogService
+from app.boards.application.board_management import BoardService
 from app.boards.presentation import deps
 from app.boards.presentation.schemas import AssignToSprintRequest, BoardCardResponse
 from app.platform_core.api.responses import DataResponse
@@ -28,8 +29,13 @@ def _to_response(dto) -> BoardCardResponse:
 @router.get("/boards/{board_id}/backlog", response_model=DataResponse[list[BoardCardResponse]])
 async def get_product_backlog(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BacklogService = Depends(deps.get_backlog_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardCardResponse]]:
+    await access_service.assert_can_view_board(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     cards = await service.list_product_backlog(board_id=UUID(board_id))
     return DataResponse(data=[_to_response(c) for c in cards])
 
@@ -37,8 +43,13 @@ async def get_product_backlog(
 @router.get("/sprints/{sprint_id}/backlog", response_model=DataResponse[list[BoardCardResponse]])
 async def get_sprint_backlog(
     sprint_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BacklogService = Depends(deps.get_backlog_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardCardResponse]]:
+    await access_service.assert_can_view_sprint(
+        sprint_id=UUID(sprint_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     cards = await service.list_sprint_backlog(sprint_id=UUID(sprint_id))
     return DataResponse(data=[_to_response(c) for c in cards])
 
@@ -48,7 +59,9 @@ async def move_to_backlog(
     card_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BacklogService = Depends(deps.get_backlog_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     card = await service.move_to_backlog(card_id=UUID(card_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(card))
 
@@ -59,7 +72,10 @@ async def assign_to_sprint(
     request: AssignToSprintRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BacklogService = Depends(deps.get_backlog_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
+    await access_service.assert_sprint_belongs_to_org(sprint_id=request.sprint_id, org_id=claims.org_id)
     card = await service.assign_to_sprint(card_id=UUID(card_id), actor_user_id=claims.subject_user_id, sprint_id=request.sprint_id)
     return DataResponse(data=_to_response(card))
 
@@ -69,6 +85,8 @@ async def remove_from_sprint(
     card_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BacklogService = Depends(deps.get_backlog_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     card = await service.remove_from_sprint(card_id=UUID(card_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(card))

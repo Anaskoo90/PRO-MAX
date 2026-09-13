@@ -3,7 +3,7 @@ import pytest
 from app.projects.application.project_management import ProjectService
 from app.projects.application.workspace_management import WorkspaceService
 from app.projects.domain.entities import ProjectTemplate, ProjectVisibility, WorkspaceRole
-from app.projects.domain.exceptions import InsufficientProjectRoleError
+from app.projects.domain.exceptions import InsufficientProjectRoleError, ProjectTemplateNotFoundError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -92,3 +92,30 @@ async def test_workspace_viewer_cannot_create_project_end_to_end() -> None:
     project_service = ProjectService(uow_factory=lambda: uow, dispatcher=EventDispatcher(), permission_checker=DenyAllPermissionChecker())
     with pytest.raises(InsufficientProjectRoleError):
         await project_service.create_project(workspace_id=workspace.id, actor_user_id=viewer_id, name="Should Fail")
+
+
+@pytest.mark.asyncio
+async def test_create_project_rejects_template_from_another_tenant() -> None:
+    uow = FakeProjectsUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    actor_id = UserId(new_uuid7())
+    workspace_service = WorkspaceService(
+        uow_factory=lambda: uow, dispatcher=EventDispatcher(), permission_checker=AllowAllPermissionChecker()
+    )
+    workspace = await workspace_service.create_workspace(
+        org_id=org_id, actor_user_id=actor_id, name="Eng", slug="eng"
+    )
+    foreign_template = ProjectTemplate.create(org_id=OrgId(new_uuid7()), name="Foreign")
+    await uow.project_templates.add(foreign_template)
+    project_service = ProjectService(
+        uow_factory=lambda: uow, dispatcher=EventDispatcher(), permission_checker=AllowAllPermissionChecker()
+    )
+
+    with pytest.raises(ProjectTemplateNotFoundError):
+        await project_service.create_project(
+            workspace_id=workspace.id,
+            org_id=org_id,
+            actor_user_id=actor_id,
+            name="Should Fail",
+            template_id=foreign_template.id,
+        )

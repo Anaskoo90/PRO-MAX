@@ -84,6 +84,7 @@ async def update_project_template(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectTemplateService = Depends(deps.get_project_template_service),
 ) -> DataResponse[ProjectTemplateResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, template_id=UUID(template_id))
     template = await service.update_template(
         template_id=UUID(template_id), actor_user_id=claims.subject_user_id, name=request.name, description=request.description
     )
@@ -96,6 +97,7 @@ async def set_default_project_template(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectTemplateService = Depends(deps.get_project_template_service),
 ) -> DataResponse[ProjectTemplateResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, template_id=UUID(template_id))
     template = await service.set_default(template_id=UUID(template_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(template))
 
@@ -106,4 +108,5 @@ async def delete_project_template(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectTemplateService = Depends(deps.get_project_template_service),
 ) -> None:
+    await service.assert_belongs_to_org(org_id=claims.org_id, template_id=UUID(template_id))
     await service.delete_template(template_id=UUID(template_id), actor_user_id=claims.subject_user_id)

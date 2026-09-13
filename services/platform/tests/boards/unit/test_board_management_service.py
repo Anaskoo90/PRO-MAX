@@ -82,6 +82,23 @@ async def test_archive_restore_and_delete_round_trip(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_board_read_denies_cross_tenant_and_allows_same_tenant(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    service = _make_service(uow, project_context)
+    board = await service.create_board(
+        project_id=project_id, org_id=org_id, actor_user_id=actor_id, name="Tenant board"
+    )
+
+    with pytest.raises(BoardNotFoundError):
+        await service.get_for_actor(
+            board_id=board.id, org_id=OrgId(new_uuid7()), user_id=actor_id
+        )
+
+    result = await service.get_for_actor(board_id=board.id, org_id=org_id, user_id=actor_id)
+    assert result.id == board.id
+
+
+@pytest.mark.asyncio
 async def test_update_settings_merges_patch(context) -> None:
     uow, project_context, project_id, org_id, actor_id = context
     service = _make_service(uow, project_context)

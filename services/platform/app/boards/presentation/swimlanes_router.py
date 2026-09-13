@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.boards.application.swimlane_management import SwimlaneService
+from app.boards.application.board_management import BoardService
 from app.boards.presentation import deps
 from app.boards.presentation.schemas import (
     CreateSwimlaneRequest,
@@ -33,7 +34,9 @@ async def create_swimlane(
     request: CreateSwimlaneRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[SwimlaneResponse]:
+    await access_service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     swimlane = await service.create_swimlane(board_id=UUID(board_id), actor_user_id=claims.subject_user_id, name=request.name)
     return DataResponse(data=_to_response(swimlane))
 
@@ -41,8 +44,13 @@ async def create_swimlane(
 @router.get("/boards/{board_id}/swimlanes", response_model=DataResponse[list[SwimlaneResponse]])
 async def list_swimlanes(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[SwimlaneResponse]]:
+    await access_service.assert_can_view_board(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     swimlanes = await service.list_for_board(board_id=UUID(board_id))
     return DataResponse(data=[_to_response(s) for s in swimlanes])
 
@@ -50,8 +58,13 @@ async def list_swimlanes(
 @router.get("/boards/{board_id}/swimlanes/dynamic-groups", response_model=DataResponse[list[SwimlaneGroupResponse]])
 async def get_dynamic_swimlane_groups(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[SwimlaneGroupResponse]]:
+    await access_service.assert_can_view_board(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     groups = await service.compute_dynamic_groups(board_id=UUID(board_id))
     return DataResponse(data=[SwimlaneGroupResponse(key=g.key, label=g.label, card_ids=g.card_ids) for g in groups])
 
@@ -62,7 +75,9 @@ async def rename_swimlane(
     request: RenameSwimlaneRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[SwimlaneResponse]:
+    await access_service.assert_swimlane_belongs_to_org(swimlane_id=UUID(swimlane_id), org_id=claims.org_id)
     swimlane = await service.rename_swimlane(swimlane_id=UUID(swimlane_id), actor_user_id=claims.subject_user_id, name=request.name)
     return DataResponse(data=_to_response(swimlane))
 
@@ -73,7 +88,9 @@ async def reorder_swimlane(
     request: ReorderSwimlaneRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[SwimlaneResponse]:
+    await access_service.assert_swimlane_belongs_to_org(swimlane_id=UUID(swimlane_id), org_id=claims.org_id)
     swimlane = await service.reorder_swimlane(
         swimlane_id=UUID(swimlane_id), actor_user_id=claims.subject_user_id,
         previous_swimlane_id=request.previous_swimlane_id, next_swimlane_id=request.next_swimlane_id,
@@ -86,5 +103,7 @@ async def delete_swimlane(
     swimlane_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SwimlaneService = Depends(deps.get_swimlane_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> None:
+    await access_service.assert_swimlane_belongs_to_org(swimlane_id=UUID(swimlane_id), org_id=claims.org_id)
     await service.delete_swimlane(swimlane_id=UUID(swimlane_id), actor_user_id=claims.subject_user_id)

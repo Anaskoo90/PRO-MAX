@@ -29,6 +29,21 @@ def test_assign_task_without_authorization_header_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_task_reads_without_authorization_header_are_rejected() -> None:
+    resource_id = "00000000-0000-7000-8000-000000000000"
+
+    for path in (
+        f"/api/v1/projects/{resource_id}/tasks",
+        f"/api/v1/tasks/{resource_id}",
+        f"/api/v1/tasks/{resource_id}/assignments",
+        f"/api/v1/projects/{resource_id}/labels",
+        f"/api/v1/projects/{resource_id}/workflow",
+    ):
+        assert client.get(path).status_code == 401
+
+    assert client.post(f"/api/v1/projects/{resource_id}/tasks/search", json={}).status_code == 401
+
+
 def test_create_task_rejects_missing_required_fields() -> None:
     response = client.post(
         "/api/v1/projects/00000000-0000-7000-8000-000000000000/tasks",

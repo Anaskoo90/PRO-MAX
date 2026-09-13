@@ -13,13 +13,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, UserId
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.projects.application.authorization_helpers import ProjectAuthorization, WorkspaceAuthorization
 from app.projects.application.dtos import ProjectDTO
 from app.projects.application.ports import OrgPermissionCheckerPort
 from app.projects.domain.audit import ProjectsAuditEventCategory, ProjectsAuditLogRecord
 from app.projects.domain.entities import (
-    MembershipStatus,
     Project,
     ProjectMembership,
     ProjectRole,
@@ -29,6 +28,7 @@ from app.projects.domain.entities import (
 from app.projects.domain.exceptions import (
     InsufficientProjectRoleError,
     ProjectNotFoundError,
+    ProjectTemplateNotFoundError,
     WorkspaceNotFoundError,
 )
 
@@ -61,6 +61,7 @@ class ProjectService:
         workspace_id: EntityId,
         actor_user_id: UserId,
         name: str,
+        org_id: OrgId | None = None,
         description: str = "",
         visibility: ProjectVisibility | None = None,
         metadata: dict[str, Any] | None = None,
@@ -69,7 +70,7 @@ class ProjectService:
     ) -> ProjectDTO:
         async with self._uow_factory() as uow:
             workspace = await uow.workspaces.get_by_id(workspace_id)
-            if workspace is None:
+            if workspace is None or (org_id is not None and workspace.org_id != org_id):
                 raise WorkspaceNotFoundError(workspace_id)
             workspace.assert_active()
             if not await self._workspace_authorization.can_create_projects(
@@ -82,10 +83,11 @@ class ProjectService:
             effective_settings = dict(settings or {})
             if template_id is not None:
                 template = await uow.project_templates.get_by_id(template_id)
-                if template is not None:
-                    effective_visibility = effective_visibility or template.default_visibility
-                    effective_metadata = {**template.default_metadata, **effective_metadata}
-                    effective_settings = {**template.default_settings, **effective_settings}
+                if template is None or template.org_id != workspace.org_id:
+                    raise ProjectTemplateNotFoundError(template_id)
+                effective_visibility = effective_visibility or template.default_visibility
+                effective_metadata = {**template.default_metadata, **effective_metadata}
+                effective_settings = {**template.default_settings, **effective_settings}
 
             project = Project.create(
                 workspace_id=workspace_id, org_id=workspace.org_id, name=name, description=description,
@@ -115,10 +117,48 @@ class ProjectService:
                 raise ProjectNotFoundError(project_id)
             return _to_dto(project)
 
+    async def get_for_actor(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> ProjectDTO:
+        async with self._uow_factory() as uow:
+            project = await uow.projects.get_by_id(project_id)
+            if project is None or project.org_id != org_id:
+                raise ProjectNotFoundError(project_id)
+            if not await self._project_authorization.can_view(
+                uow=uow, project_id=project_id, org_id=project.org_id, user_id=user_id
+            ):
+                raise InsufficientProjectRoleError(("project:read", "active project/workspace member"))
+            return _to_dto(project)
+
+    async def assert_belongs_to_org(self, *, project_id: EntityId, org_id: OrgId) -> None:
+        """Bind an ID-addressed project operation to the caller's tenant."""
+        async with self._uow_factory() as uow:
+            project = await uow.projects.get_by_id(project_id)
+            if project is None or project.org_id != org_id:
+                raise ProjectNotFoundError(project_id)
+
+    async def assert_can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        await self.get_for_actor(project_id=project_id, org_id=org_id, user_id=user_id)
+
     async def list_for_workspace(self, *, workspace_id: EntityId, include_archived: bool = False) -> list[ProjectDTO]:
         async with self._uow_factory() as uow:
             projects = await uow.projects.list_for_workspace(workspace_id, include_archived=include_archived)
             return [_to_dto(p) for p in projects]
+
+    async def list_for_workspace_for_actor(
+        self, *, workspace_id: EntityId, org_id: OrgId, user_id: UserId, include_archived: bool = False
+    ) -> list[ProjectDTO]:
+        async with self._uow_factory() as uow:
+            workspace = await uow.workspaces.get_by_id(workspace_id)
+            if workspace is None or workspace.org_id != org_id:
+                raise WorkspaceNotFoundError(workspace_id)
+            projects = await uow.projects.list_for_workspace(workspace_id, include_archived=include_archived)
+            visible = [
+                project
+                for project in projects
+                if await self._project_authorization.can_view(
+                    uow=uow, project_id=project.id, org_id=project.org_id, user_id=user_id
+                )
+            ]
+            return [_to_dto(project) for project in visible]
 
     async def _load_and_authorize(self, uow, *, project_id: EntityId, actor_user_id: UserId) -> Project:
         project = await uow.projects.get_by_id(project_id)

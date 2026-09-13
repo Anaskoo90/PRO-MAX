@@ -106,7 +106,7 @@ class LabelService:
             if task is None:
                 raise TaskNotFoundError(task_id)
             label = await uow.labels.get_by_id(label_id)
-            if label is None:
+            if label is None or label.project_id != task.project_id:
                 raise LabelNotFoundError(label_id)
             await self._authorization.assert_can_manage(project_id=task.project_id, org_id=task.org_id, user_id=actor_user_id)
 
@@ -122,6 +122,9 @@ class LabelService:
             task = await uow.tasks.get_by_id(task_id)
             if task is None:
                 raise TaskNotFoundError(task_id)
+            label = await uow.labels.get_by_id(label_id)
+            if label is None or label.project_id != task.project_id:
+                raise LabelNotFoundError(label_id)
             await self._authorization.assert_can_manage(project_id=task.project_id, org_id=task.org_id, user_id=actor_user_id)
 
             task_label = await uow.task_labels.get(task_id, label_id)

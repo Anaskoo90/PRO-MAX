@@ -97,3 +97,20 @@ async def test_non_member_cannot_create_task(context) -> None:
 
     with pytest.raises(InsufficientTaskPermissionError):
         await service.create_task(project_id=project_id, org_id=org_id, actor_user_id=outsider_id, title="Demo")
+
+
+@pytest.mark.asyncio
+async def test_task_read_denies_cross_tenant_and_allows_same_tenant(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    service = _make_service(uow, project_context)
+    task = await service.create_task(
+        project_id=project_id, org_id=org_id, actor_user_id=actor_id, title="Tenant task"
+    )
+
+    with pytest.raises(ProjectNotAccessibleError):
+        await service.get_for_actor(
+            task_id=task.id, org_id=OrgId(new_uuid7()), user_id=actor_id
+        )
+
+    result = await service.get_for_actor(task_id=task.id, org_id=org_id, user_id=actor_id)
+    assert result.id == task.id

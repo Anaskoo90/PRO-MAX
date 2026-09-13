@@ -65,11 +65,15 @@ class TaskOrderingService:
             previous_position = None
             if previous_task_id is not None:
                 previous_task = await uow.tasks.get_by_id(previous_task_id)
-                previous_position = previous_task.position if previous_task else None
+                if previous_task is None or previous_task.project_id != task.project_id:
+                    raise TaskNotFoundError(previous_task_id)
+                previous_position = previous_task.position
             next_position = None
             if next_task_id is not None:
                 next_task = await uow.tasks.get_by_id(next_task_id)
-                next_position = next_task.position if next_task else None
+                if next_task is None or next_task.project_id != task.project_id:
+                    raise TaskNotFoundError(next_task_id)
+                next_position = next_task.position
 
             new_position = compute_position_between(previous_position, next_position)
             task.set_position(new_position)

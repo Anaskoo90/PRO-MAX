@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.projects.application.project_management import ProjectService
+from app.projects.application.workspace_management import WorkspaceService
 from app.projects.domain.entities import ProjectStatus, ProjectVisibility
 from app.projects.presentation import deps
 from app.projects.presentation.schemas import (
@@ -39,9 +40,12 @@ async def create_project(
     request: CreateProjectRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
+    workspace_service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[ProjectResponse]:
+    await workspace_service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     project = await service.create_project(
         workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id, name=request.name,
+        org_id=claims.org_id,
         description=request.description,
         visibility=ProjectVisibility(request.visibility) if request.visibility else None,
         metadata=request.metadata, settings=request.settings,
@@ -54,18 +58,25 @@ async def create_project(
 async def list_projects(
     workspace_id: str,
     include_archived: bool = False,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[list[ProjectResponse]]:
-    projects = await service.list_for_workspace(workspace_id=UUID(workspace_id), include_archived=include_archived)
+    projects = await service.list_for_workspace_for_actor(
+        workspace_id=UUID(workspace_id), org_id=claims.org_id, user_id=claims.subject_user_id,
+        include_archived=include_archived,
+    )
     return DataResponse(data=[_to_response(p) for p in projects])
 
 
 @router.get("/projects/{project_id}", response_model=DataResponse[ProjectResponse])
 async def get_project(
     project_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
-    project = await service.get(project_id=UUID(project_id))
+    project = await service.get_for_actor(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     return DataResponse(data=_to_response(project))
 
 
@@ -76,6 +87,7 @@ async def update_project(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.update(
         project_id=UUID(project_id), actor_user_id=claims.subject_user_id, name=request.name, description=request.description
     )
@@ -89,6 +101,7 @@ async def update_project_metadata(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.update_metadata(project_id=UUID(project_id), actor_user_id=claims.subject_user_id, patch=request.metadata)
     return DataResponse(data=_to_response(project))
 
@@ -100,6 +113,7 @@ async def update_project_settings(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.update_settings(project_id=UUID(project_id), actor_user_id=claims.subject_user_id, patch=request.settings)
     return DataResponse(data=_to_response(project))
 
@@ -111,6 +125,7 @@ async def change_project_status(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.change_status(
         project_id=UUID(project_id), actor_user_id=claims.subject_user_id, status=ProjectStatus(request.status)
     )
@@ -124,6 +139,7 @@ async def change_project_visibility(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.change_visibility(
         project_id=UUID(project_id), actor_user_id=claims.subject_user_id, visibility=ProjectVisibility(request.visibility)
     )
@@ -136,6 +152,7 @@ async def archive_project(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.archive(project_id=UUID(project_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(project))
 
@@ -146,6 +163,7 @@ async def unarchive_project(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> DataResponse[ProjectResponse]:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     project = await service.unarchive(project_id=UUID(project_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(project))
 
@@ -156,4 +174,5 @@ async def delete_project(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ProjectService = Depends(deps.get_project_service),
 ) -> None:
+    await service.assert_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     await service.delete(project_id=UUID(project_id), actor_user_id=claims.subject_user_id)

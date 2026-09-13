@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.tasks.application.task_ordering import AutoOrderStrategy, TaskOrderingService
+from app.tasks.application.task_management import TaskService
 from app.tasks.presentation import deps
 from app.tasks.presentation.schemas import MoveTaskRequest, TaskResponse
 from app.platform_core.api.responses import DataResponse
@@ -32,7 +33,9 @@ async def move_task(
     request: MoveTaskRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskOrderingService = Depends(deps.get_task_ordering_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.move_task(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, previous_task_id=request.previous_task_id,
         next_task_id=request.next_task_id,
@@ -44,7 +47,12 @@ async def move_task(
 async def list_auto_ordered_tasks(
     project_id: str,
     strategy: AutoOrderStrategy = AutoOrderStrategy.PRIORITY_DESC,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskOrderingService = Depends(deps.get_task_ordering_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     tasks = await service.list_auto_ordered(project_id=UUID(project_id), strategy=strategy)
     return DataResponse(data=[_to_response(t) for t in tasks])

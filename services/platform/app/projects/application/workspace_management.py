@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
-
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.projects.application.authorization_helpers import WorkspaceAuthorization
@@ -88,6 +86,13 @@ class WorkspaceService:
             if workspace is None or workspace.org_id != org_id:
                 raise WorkspaceNotFoundError(workspace_id)
             return _to_dto(workspace)
+
+    async def assert_belongs_to_org(self, *, org_id: OrgId, workspace_id: EntityId) -> None:
+        """Bind an ID-addressed workspace operation to the caller's tenant."""
+        async with self._uow_factory() as uow:
+            workspace = await uow.workspaces.get_by_id(workspace_id)
+            if workspace is None or workspace.org_id != org_id:
+                raise WorkspaceNotFoundError(workspace_id)
 
     async def list_for_org(self, *, org_id: OrgId) -> list[WorkspaceDTO]:
         async with self._uow_factory() as uow:

@@ -12,6 +12,7 @@ async def test_workspace_owner_can_manage_without_org_permission() -> None:
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    await uow.workspaces.add(workspace)
     owner_id = UserId(new_uuid7())
     await uow.workspace_memberships.add(WorkspaceMembership.create(workspace_id=workspace.id, user_id=owner_id, role=WorkspaceRole.OWNER))
 
@@ -24,6 +25,7 @@ async def test_non_member_without_org_permission_cannot_manage_workspace() -> No
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    await uow.workspaces.add(workspace)
 
     auth = WorkspaceAuthorization(permission_checker=DenyAllPermissionChecker())
     assert await auth.can_manage(uow=uow, workspace_id=workspace.id, org_id=org_id, user_id=UserId(new_uuid7())) is False
@@ -34,6 +36,7 @@ async def test_org_admin_can_manage_workspace_without_being_a_member() -> None:
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    await uow.workspaces.add(workspace)
 
     auth = WorkspaceAuthorization(permission_checker=AllowAllPermissionChecker())
     assert await auth.can_manage(uow=uow, workspace_id=workspace.id, org_id=org_id, user_id=UserId(new_uuid7())) is True
@@ -44,6 +47,7 @@ async def test_workspace_viewer_cannot_create_projects() -> None:
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    await uow.workspaces.add(workspace)
     viewer_id = UserId(new_uuid7())
     await uow.workspace_memberships.add(WorkspaceMembership.create(workspace_id=workspace.id, user_id=viewer_id, role=WorkspaceRole.VIEWER))
 
@@ -56,6 +60,7 @@ async def test_workspace_member_can_create_projects() -> None:
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    await uow.workspaces.add(workspace)
     member_id = UserId(new_uuid7())
     await uow.workspace_memberships.add(WorkspaceMembership.create(workspace_id=workspace.id, user_id=member_id, role=WorkspaceRole.MEMBER))
 
@@ -68,6 +73,7 @@ async def test_project_contributor_cannot_manage_but_owner_can() -> None:
     uow = FakeProjectsUnitOfWork()
     org_id = OrgId(new_uuid7())
     project = Project.create(workspace_id=EntityId(new_uuid7()), org_id=org_id, name="Demo")
+    await uow.projects.add(project)
     owner_id = UserId(new_uuid7())
     contributor_id = UserId(new_uuid7())
     await uow.project_memberships.add(ProjectMembership.add_directly(project_id=project.id, user_id=owner_id, role=ProjectRole.OWNER))
@@ -76,3 +82,47 @@ async def test_project_contributor_cannot_manage_but_owner_can() -> None:
     auth = ProjectAuthorization(permission_checker=DenyAllPermissionChecker())
     assert await auth.can_manage(uow=uow, project_id=project.id, org_id=org_id, user_id=owner_id) is True
     assert await auth.can_manage(uow=uow, project_id=project.id, org_id=org_id, user_id=contributor_id) is False
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_workspace_and_project_checks_fail_before_rbac() -> None:
+    uow = FakeProjectsUnitOfWork()
+    resource_org_id = OrgId(new_uuid7())
+    caller_org_id = OrgId(new_uuid7())
+    user_id = UserId(new_uuid7())
+    workspace = Workspace.create(org_id=resource_org_id, name="Eng", slug="eng")
+    project = Project.create(workspace_id=workspace.id, org_id=resource_org_id, name="Secret")
+    await uow.workspaces.add(workspace)
+    await uow.projects.add(project)
+
+    workspace_auth = WorkspaceAuthorization(permission_checker=AllowAllPermissionChecker())
+    project_auth = ProjectAuthorization(permission_checker=AllowAllPermissionChecker())
+
+    assert await workspace_auth.can_manage(
+        uow=uow, workspace_id=workspace.id, org_id=caller_org_id, user_id=user_id
+    ) is False
+    assert await project_auth.can_manage(
+        uow=uow, project_id=project.id, org_id=caller_org_id, user_id=user_id
+    ) is False
+    assert await project_auth.can_manage_members(
+        uow=uow, project_id=project.id, org_id=caller_org_id, user_id=user_id
+    ) is False
+    assert await project_auth.can_view(
+        uow=uow, project_id=project.id, org_id=caller_org_id, user_id=user_id
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_same_tenant_rbac_user_can_view_and_manage_project() -> None:
+    uow = FakeProjectsUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    user_id = UserId(new_uuid7())
+    workspace = Workspace.create(org_id=org_id, name="Eng", slug="eng")
+    project = Project.create(workspace_id=workspace.id, org_id=org_id, name="Visible")
+    await uow.workspaces.add(workspace)
+    await uow.projects.add(project)
+
+    auth = ProjectAuthorization(permission_checker=AllowAllPermissionChecker())
+
+    assert await auth.can_view(uow=uow, project_id=project.id, org_id=org_id, user_id=user_id) is True
+    assert await auth.can_manage(uow=uow, project_id=project.id, org_id=org_id, user_id=user_id) is True

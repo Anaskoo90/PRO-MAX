@@ -6,6 +6,7 @@ from app.tasks.domain.entities import Task
 from app.tasks.domain.exceptions import (
     InvalidLabelColorError,
     LabelAlreadyExistsError,
+    LabelNotFoundError,
     TaskLabelAlreadyAttachedError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
@@ -82,3 +83,24 @@ async def test_attach_and_detach_label_from_task(context) -> None:
     await service.detach_label(task_id=task.id, label_id=label.id, actor_user_id=actor_id)
     labels_after = await service.list_labels_for_task(task_id=task.id)
     assert labels_after == []
+
+
+@pytest.mark.asyncio
+async def test_cannot_attach_label_from_another_project(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    task = Task.create(project_id=project_id, org_id=org_id, title="Demo")
+    uow.tasks.tasks[task.id] = task
+    service = _make_service(uow, project_context)
+    foreign_label = await service.create_label(
+        project_id=project_id,
+        org_id=org_id,
+        actor_user_id=actor_id,
+        name="Foreign",
+        color="#FF0000",
+    )
+    uow.labels.labels[foreign_label.id].project_id = EntityId(new_uuid7())
+
+    with pytest.raises(LabelNotFoundError):
+        await service.attach_label(
+            task_id=task.id, label_id=foreign_label.id, actor_user_id=actor_id
+        )

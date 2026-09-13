@@ -77,6 +77,7 @@ async def update_workspace(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     workspace = await service.update(
         workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id, name=request.name,
         description=request.description,
@@ -91,6 +92,7 @@ async def update_workspace_settings(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     workspace = await service.update_settings(workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id, patch=request.settings)
     return DataResponse(data=_to_response(workspace))
 
@@ -101,6 +103,7 @@ async def archive_workspace(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     workspace = await service.archive(workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(workspace))
 
@@ -111,6 +114,7 @@ async def reactivate_workspace(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     workspace = await service.reactivate(workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(workspace))
 
@@ -122,6 +126,7 @@ async def add_workspace_member(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> DataResponse[WorkspaceMembershipResponse]:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     membership = await service.add_member(
         workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id, target_user_id=request.user_id,
         role=WorkspaceRole(request.role),
@@ -146,4 +151,5 @@ async def remove_workspace_member(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkspaceService = Depends(deps.get_workspace_service),
 ) -> None:
+    await service.assert_belongs_to_org(org_id=claims.org_id, workspace_id=UUID(workspace_id))
     await service.remove_member(workspace_id=UUID(workspace_id), actor_user_id=claims.subject_user_id, target_user_id=UUID(user_id))

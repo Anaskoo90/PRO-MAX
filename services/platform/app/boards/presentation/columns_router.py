@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.boards.application.column_management import ColumnService
+from app.boards.application.board_management import BoardService
 from app.boards.presentation import deps
 from app.boards.presentation.schemas import (
     BoardColumnResponse,
@@ -38,7 +39,9 @@ async def create_column(
     request: CreateColumnRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     column = await service.create_column(
         board_id=UUID(board_id), actor_user_id=claims.subject_user_id, name=request.name, wip_limit=request.wip_limit,
         color=request.color, mapped_task_status=request.mapped_task_status,
@@ -49,8 +52,13 @@ async def create_column(
 @router.get("/boards/{board_id}/columns", response_model=DataResponse[list[BoardColumnResponse]])
 async def list_columns(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardColumnResponse]]:
+    await access_service.assert_can_view_board(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     columns = await service.list_for_board(board_id=UUID(board_id))
     return DataResponse(data=[_to_response(c) for c in columns])
 
@@ -61,7 +69,9 @@ async def rename_column(
     request: RenameColumnRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.rename_column(column_id=UUID(column_id), actor_user_id=claims.subject_user_id, name=request.name)
     return DataResponse(data=_to_response(column))
 
@@ -72,7 +82,9 @@ async def set_wip_limit(
     request: SetWipLimitRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.set_wip_limit(column_id=UUID(column_id), actor_user_id=claims.subject_user_id, wip_limit=request.wip_limit)
     return DataResponse(data=_to_response(column))
 
@@ -83,7 +95,9 @@ async def set_column_color(
     request: SetColumnColorRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.set_color(column_id=UUID(column_id), actor_user_id=claims.subject_user_id, color=request.color)
     return DataResponse(data=_to_response(column))
 
@@ -94,7 +108,9 @@ async def set_column_policies(
     request: SetColumnPoliciesRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.set_policies(column_id=UUID(column_id), actor_user_id=claims.subject_user_id, policies=request.policies)
     return DataResponse(data=_to_response(column))
 
@@ -105,7 +121,9 @@ async def set_mapped_task_status(
     request: SetMappedTaskStatusRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.set_mapped_task_status(column_id=UUID(column_id), actor_user_id=claims.subject_user_id, status=request.status)
     return DataResponse(data=_to_response(column))
 
@@ -116,7 +134,9 @@ async def reorder_column(
     request: ReorderColumnRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardColumnResponse]:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     column = await service.reorder_column(
         column_id=UUID(column_id), actor_user_id=claims.subject_user_id,
         previous_column_id=request.previous_column_id, next_column_id=request.next_column_id,
@@ -129,5 +149,7 @@ async def delete_column(
     column_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: ColumnService = Depends(deps.get_column_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> None:
+    await access_service.assert_column_belongs_to_org(column_id=UUID(column_id), org_id=claims.org_id)
     await service.delete_column(column_id=UUID(column_id), actor_user_id=claims.subject_user_id)

@@ -59,8 +59,13 @@ async def create_task(
 async def list_tasks(
     project_id: str,
     include_archived: bool = False,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    access_service: TaskService = Depends(deps.get_task_service),
     query_service: TaskQueryService = Depends(deps.get_task_query_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     tasks = await query_service.list_for_project(project_id=UUID(project_id), include_archived=include_archived)
     return DataResponse(data=[_to_response(t) for t in tasks])
 
@@ -69,8 +74,13 @@ async def list_tasks(
 async def search_tasks(
     project_id: str,
     request: TaskSearchRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    access_service: TaskService = Depends(deps.get_task_service),
     query_service: TaskQueryService = Depends(deps.get_task_query_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     filters = TaskListFilter(
         status=request.status, priority=request.priority, label_id=request.label_id,
         assignee_user_id=request.assignee_user_id, search_text=request.search_text,
@@ -83,8 +93,13 @@ async def search_tasks(
 @router.get("/projects/{project_id}/tasks/overdue", response_model=DataResponse[list[TaskResponse]])
 async def list_overdue_tasks(
     project_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    access_service: TaskService = Depends(deps.get_task_service),
     query_service: TaskQueryService = Depends(deps.get_task_query_service),
 ) -> DataResponse[list[TaskResponse]]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     tasks = await query_service.list_overdue_for_project(project_id=UUID(project_id))
     return DataResponse(data=[_to_response(t) for t in tasks])
 
@@ -92,9 +107,12 @@ async def list_overdue_tasks(
 @router.get("/tasks/{task_id}", response_model=DataResponse[TaskResponse])
 async def get_task(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
-    task = await service.get(task_id=UUID(task_id))
+    task = await service.get_for_actor(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     return DataResponse(data=_to_response(task))
 
 
@@ -105,6 +123,7 @@ async def update_task(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.update(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, title=request.title, description=request.description)
     return DataResponse(data=_to_response(task))
 
@@ -115,6 +134,7 @@ async def archive_task(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.archive(task_id=UUID(task_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(task))
 
@@ -125,6 +145,7 @@ async def restore_task(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.restore(task_id=UUID(task_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(task))
 
@@ -135,6 +156,7 @@ async def delete_task(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.delete(task_id=UUID(task_id), actor_user_id=claims.subject_user_id)
 
 
@@ -145,6 +167,7 @@ async def duplicate_task(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.duplicate(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, title=request.title)
     return DataResponse(data=_to_response(task))
 
@@ -155,7 +178,9 @@ async def change_task_status(
     request: ChangeTaskStatusRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskLifecycleService = Depends(deps.get_task_lifecycle_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.change_status(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, status=TaskStatus(request.status))
     return DataResponse(data=_to_response(task))
 
@@ -166,7 +191,9 @@ async def change_task_priority(
     request: ChangeTaskPriorityRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskLifecycleService = Depends(deps.get_task_lifecycle_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.change_priority(task_id=UUID(task_id), actor_user_id=claims.subject_user_id, priority=TaskPriority(request.priority))
     return DataResponse(data=_to_response(task))
 
@@ -177,7 +204,9 @@ async def set_task_dates(
     request: SetTaskDatesRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: TaskSchedulingService = Depends(deps.get_task_scheduling_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[TaskResponse]:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     task = await service.set_dates(
         task_id=UUID(task_id), actor_user_id=claims.subject_user_id, start_date=request.start_date,
         due_date=request.due_date, reminder_date=request.reminder_date,

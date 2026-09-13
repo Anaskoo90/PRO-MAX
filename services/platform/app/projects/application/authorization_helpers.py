@@ -17,8 +17,8 @@ project owner can manage their own without needing an org-wide grant.
 from __future__ import annotations
 
 from app.projects.application.ports import OrgPermissionCheckerPort, ProjectsUnitOfWorkPort
-from app.projects.domain.entities import ProjectRole, WorkspaceRole
-from app.projects.domain.exceptions import InsufficientProjectRoleError, WorkspaceNotActiveError
+from app.projects.domain.entities import MembershipStatus, ProjectRole, ProjectVisibility, WorkspaceRole
+from app.projects.domain.exceptions import InsufficientProjectRoleError
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 
@@ -29,7 +29,12 @@ class WorkspaceAuthorization:
     async def can_manage(
         self, *, uow: ProjectsUnitOfWorkPort, workspace_id: EntityId, org_id: OrgId, user_id: UserId
     ) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="workspace", action="update"):
+        workspace = await uow.workspaces.get_by_id(workspace_id)
+        if workspace is None or workspace.org_id != org_id:
+            return False
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=workspace.org_id, resource="workspace", action="update"
+        ):
             return True
         membership = await uow.workspace_memberships.get(workspace_id, user_id)
         return membership is not None and membership.role in (WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
@@ -37,7 +42,12 @@ class WorkspaceAuthorization:
     async def can_create_projects(
         self, *, uow: ProjectsUnitOfWorkPort, workspace_id: EntityId, org_id: OrgId, user_id: UserId
     ) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="project", action="create"):
+        workspace = await uow.workspaces.get_by_id(workspace_id)
+        if workspace is None or workspace.org_id != org_id:
+            return False
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=workspace.org_id, resource="project", action="create"
+        ):
             return True
         membership = await uow.workspace_memberships.get(workspace_id, user_id)
         return membership is not None and membership.role != WorkspaceRole.VIEWER
@@ -50,17 +60,48 @@ class ProjectAuthorization:
     async def can_manage(
         self, *, uow: ProjectsUnitOfWorkPort, project_id: EntityId, org_id: OrgId, user_id: UserId
     ) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="project", action="update"):
+        project = await uow.projects.get_by_id(project_id)
+        if project is None or project.org_id != org_id:
+            return False
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="project", action="update"
+        ):
             return True
         membership = await uow.project_memberships.get(project_id, user_id)
         return membership is not None and membership.role in (ProjectRole.OWNER, ProjectRole.ADMIN) and membership.status.value == "active"
 
+    async def can_view(
+        self, *, uow: ProjectsUnitOfWorkPort, project_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> bool:
+        project = await uow.projects.get_by_id(project_id)
+        if project is None or project.org_id != org_id:
+            return False
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="project", action="read"
+        ):
+            return True
+        membership = await uow.project_memberships.get(project_id, user_id)
+        if membership is not None and membership.status == MembershipStatus.ACTIVE:
+            return True
+        if project.visibility == ProjectVisibility.ORGANIZATION:
+            return True
+        if project.visibility == ProjectVisibility.WORKSPACE:
+            return await uow.workspace_memberships.get(project.workspace_id, user_id) is not None
+        return False
+
     async def can_manage_members(
         self, *, uow: ProjectsUnitOfWorkPort, project_id: EntityId, org_id: OrgId, user_id: UserId
     ) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="project", action="manage_members"):
+        project = await uow.projects.get_by_id(project_id)
+        if project is None or project.org_id != org_id:
+            return False
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="project", action="manage_members"
+        ):
             return True
-        return await self.can_manage(uow=uow, project_id=project_id, org_id=org_id, user_id=user_id)
+        return await self.can_manage(
+            uow=uow, project_id=project_id, org_id=project.org_id, user_id=user_id
+        )
 
     async def assert_can_manage(self, *, uow: ProjectsUnitOfWorkPort, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_manage(uow=uow, project_id=project_id, org_id=org_id, user_id=user_id):

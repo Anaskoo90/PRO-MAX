@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.tasks.application.label_management import LabelService
+from app.tasks.application.task_management import TaskService
 from app.tasks.presentation import deps
 from app.tasks.presentation.schemas import CreateLabelRequest, LabelResponse, UpdateLabelRequest
 from app.platform_core.api.responses import DataResponse
@@ -37,8 +38,13 @@ async def create_label(
 @router.get("/projects/{project_id}/labels", response_model=DataResponse[list[LabelResponse]])
 async def list_labels(
     project_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: LabelService = Depends(deps.get_label_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[LabelResponse]]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     labels = await service.list_for_project(project_id=UUID(project_id))
     return DataResponse(data=[_to_response(l) for l in labels])
 
@@ -72,7 +78,9 @@ async def attach_label(
     label_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: LabelService = Depends(deps.get_label_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.attach_label(task_id=UUID(task_id), label_id=UUID(label_id), actor_user_id=claims.subject_user_id)
 
 
@@ -82,14 +90,21 @@ async def detach_label(
     label_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: LabelService = Depends(deps.get_label_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> None:
+    await access_service.assert_task_belongs_to_org(task_id=UUID(task_id), org_id=claims.org_id)
     await service.detach_label(task_id=UUID(task_id), label_id=UUID(label_id), actor_user_id=claims.subject_user_id)
 
 
 @router.get("/tasks/{task_id}/labels", response_model=DataResponse[list[LabelResponse]])
 async def list_task_labels(
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: LabelService = Depends(deps.get_label_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[list[LabelResponse]]:
+    await access_service.assert_can_view_task(
+        task_id=UUID(task_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     labels = await service.list_labels_for_task(task_id=UUID(task_id))
     return DataResponse(data=[_to_response(l) for l in labels])

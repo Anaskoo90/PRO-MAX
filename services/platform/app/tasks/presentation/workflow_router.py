@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.tasks.application.workflow_management import WorkflowService
+from app.tasks.application.task_management import TaskService
 from app.tasks.presentation import deps
 from app.tasks.presentation.schemas import CreateWorkflowDefinitionRequest, WorkflowDefinitionResponse
 from app.platform_core.api.responses import DataResponse
@@ -28,7 +29,9 @@ async def create_or_replace_workflow(
     request: CreateWorkflowDefinitionRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowService = Depends(deps.get_workflow_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[WorkflowDefinitionResponse]:
+    await access_service.assert_project_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     workflow = await service.create_or_replace_workflow(
         project_id=UUID(project_id), org_id=claims.org_id, actor_user_id=claims.subject_user_id, name=request.name,
         statuses=request.statuses, transitions=request.transitions,
@@ -39,7 +42,12 @@ async def create_or_replace_workflow(
 @router.get("/projects/{project_id}/workflow", response_model=DataResponse[WorkflowDefinitionResponse])
 async def get_workflow(
     project_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowService = Depends(deps.get_workflow_service),
+    access_service: TaskService = Depends(deps.get_task_service),
 ) -> DataResponse[WorkflowDefinitionResponse]:
+    await access_service.assert_can_view_project(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     workflow = await service.get_for_project(project_id=UUID(project_id))
     return DataResponse(data=_to_response(workflow))

@@ -8,8 +8,15 @@ from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardDTO
 from app.boards.application.ports import OrgPermissionCheckerPort, ProjectContextPort
 from app.boards.domain.audit import BoardsAuditEventCategory, BoardsAuditLogRecord
-from app.boards.domain.entities import Board, BoardStatus, BoardType, SwimlaneStrategy
-from app.boards.domain.exceptions import BoardNotFoundError, InsufficientBoardPermissionError
+from app.boards.domain.entities import Board, BoardType, SwimlaneStrategy
+from app.boards.domain.exceptions import (
+    BoardCardNotFoundError,
+    BoardNotFoundError,
+    ColumnNotFoundError,
+    InsufficientBoardPermissionError,
+    SprintNotFoundError,
+    SwimlaneNotFoundError,
+)
 
 
 def _to_dto(board: Board) -> BoardDTO:
@@ -61,10 +68,79 @@ class BoardService:
                 raise BoardNotFoundError(board_id)
             return _to_dto(board)
 
+    async def assert_project_belongs_to_org(self, *, project_id: EntityId, org_id: OrgId) -> None:
+        await self._authorization.assert_project_accessible(project_id=project_id, org_id=org_id)
+
+    async def _board_for_org(self, uow, *, board_id: EntityId, org_id: OrgId) -> Board:
+        board = await uow.boards.get_by_id(board_id)
+        if board is None or board.org_id != org_id:
+            raise BoardNotFoundError(board_id)
+        await self._authorization.assert_project_accessible(project_id=board.project_id, org_id=org_id)
+        return board
+
+    async def assert_board_belongs_to_org(self, *, board_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            await self._board_for_org(uow, board_id=board_id, org_id=org_id)
+
+    async def assert_can_view_board(self, *, board_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        async with self._uow_factory() as uow:
+            board = await self._board_for_org(uow, board_id=board_id, org_id=org_id)
+            await self._authorization.assert_can_view(
+                project_id=board.project_id, org_id=board.org_id, user_id=user_id
+            )
+
+    async def get_for_actor(self, *, board_id: EntityId, org_id: OrgId, user_id: UserId) -> BoardDTO:
+        await self.assert_can_view_board(board_id=board_id, org_id=org_id, user_id=user_id)
+        return await self.get(board_id=board_id)
+
+    async def assert_column_belongs_to_org(self, *, column_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            column = await uow.board_columns.get_by_id(column_id)
+            if column is None:
+                raise ColumnNotFoundError(column_id)
+            await self._board_for_org(uow, board_id=column.board_id, org_id=org_id)
+
+    async def assert_swimlane_belongs_to_org(self, *, swimlane_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            swimlane = await uow.swimlanes.get_by_id(swimlane_id)
+            if swimlane is None:
+                raise SwimlaneNotFoundError(swimlane_id)
+            await self._board_for_org(uow, board_id=swimlane.board_id, org_id=org_id)
+
+    async def assert_card_belongs_to_org(self, *, card_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            card = await uow.board_cards.get_by_id(card_id)
+            if card is None:
+                raise BoardCardNotFoundError(card_id)
+            await self._board_for_org(uow, board_id=card.board_id, org_id=org_id)
+
+    async def assert_sprint_belongs_to_org(self, *, sprint_id: EntityId, org_id: OrgId) -> None:
+        async with self._uow_factory() as uow:
+            sprint = await uow.sprints.get_by_id(sprint_id)
+            if sprint is None:
+                raise SprintNotFoundError(sprint_id)
+            await self._board_for_org(uow, board_id=sprint.board_id, org_id=org_id)
+
+    async def assert_can_view_sprint(self, *, sprint_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        async with self._uow_factory() as uow:
+            sprint = await uow.sprints.get_by_id(sprint_id)
+            if sprint is None:
+                raise SprintNotFoundError(sprint_id)
+            board = await self._board_for_org(uow, board_id=sprint.board_id, org_id=org_id)
+            await self._authorization.assert_can_view(
+                project_id=board.project_id, org_id=board.org_id, user_id=user_id
+            )
+
     async def list_for_project(self, *, project_id: EntityId, include_archived: bool = False) -> list[BoardDTO]:
         async with self._uow_factory() as uow:
             boards = await uow.boards.list_for_project(project_id, include_archived=include_archived)
             return [_to_dto(b) for b in boards]
+
+    async def list_for_project_for_actor(
+        self, *, project_id: EntityId, org_id: OrgId, user_id: UserId, include_archived: bool = False
+    ) -> list[BoardDTO]:
+        await self._authorization.assert_can_view(project_id=project_id, org_id=org_id, user_id=user_id)
+        return await self.list_for_project(project_id=project_id, include_archived=include_archived)
 
     async def _load_and_authorize(self, uow, *, board_id: EntityId, actor_user_id: UserId) -> Board:
         board = await uow.boards.get_by_id(board_id)

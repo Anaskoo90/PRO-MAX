@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from app.boards.application.card_movement import CardMovementService
+from app.boards.application.board_management import BoardService
 from app.boards.application.estimate_management import EstimateService
 from app.boards.domain.entities import EstimateType
 from app.boards.presentation import deps
@@ -40,7 +41,9 @@ async def add_task_to_board(
     request: AddTaskToBoardRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     card = await service.add_task_to_board(
         board_id=UUID(board_id), actor_user_id=claims.subject_user_id, task_id=request.task_id, column_id=request.column_id,
     )
@@ -50,8 +53,13 @@ async def add_task_to_board(
 @router.get("/boards/{board_id}/cards", response_model=DataResponse[list[BoardCardResponse]])
 async def list_cards(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardCardResponse]]:
+    await access_service.assert_can_view_board(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     cards = await service.list_for_board(board_id=UUID(board_id))
     return DataResponse(data=[_to_response(c) for c in cards])
 
@@ -61,7 +69,10 @@ async def batch_move_cards(
     request: BatchMoveRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardCardResponse]]:
+    for entry in request.moves:
+        await access_service.assert_card_belongs_to_org(card_id=entry.card_id, org_id=claims.org_id)
     cards = await service.batch_move(
         actor_user_id=claims.subject_user_id, moves=[(entry.card_id, entry.column_id) for entry in request.moves],
     )
@@ -73,7 +84,9 @@ async def remove_task_from_board(
     card_id: str,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> None:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     await service.remove_task_from_board(card_id=UUID(card_id), actor_user_id=claims.subject_user_id)
 
 
@@ -83,7 +96,9 @@ async def move_task_to_column(
     request: MoveTaskToColumnRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     card = await service.move_task_to_column(
         card_id=UUID(card_id), actor_user_id=claims.subject_user_id, column_id=request.column_id,
         previous_card_id=request.previous_card_id, next_card_id=request.next_card_id, swimlane_id=request.swimlane_id,
@@ -97,7 +112,9 @@ async def reorder_task(
     request: ReorderTaskRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: CardMovementService = Depends(deps.get_card_movement_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     card = await service.reorder_task(
         card_id=UUID(card_id), actor_user_id=claims.subject_user_id,
         previous_card_id=request.previous_card_id, next_card_id=request.next_card_id,
@@ -111,7 +128,9 @@ async def set_estimate(
     request: SetEstimateRequest,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: EstimateService = Depends(deps.get_estimate_service),
+    access_service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardCardResponse]:
+    await access_service.assert_card_belongs_to_org(card_id=UUID(card_id), org_id=claims.org_id)
     card = await service.set_estimate(
         card_id=UUID(card_id), actor_user_id=claims.subject_user_id, estimate_type=EstimateType(request.estimate_type),
         value=request.value, custom_label=request.custom_label,

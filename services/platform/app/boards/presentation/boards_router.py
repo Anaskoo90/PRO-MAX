@@ -38,6 +38,7 @@ async def create_board(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_project_belongs_to_org(project_id=UUID(project_id), org_id=claims.org_id)
     board = await service.create_board(
         project_id=UUID(project_id), org_id=claims.org_id, actor_user_id=claims.subject_user_id, name=request.name,
         description=request.description, board_type=BoardType(request.board_type),
@@ -50,18 +51,25 @@ async def create_board(
 async def list_boards(
     project_id: str,
     include_archived: bool = False,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[list[BoardResponse]]:
-    boards = await service.list_for_project(project_id=UUID(project_id), include_archived=include_archived)
+    boards = await service.list_for_project_for_actor(
+        project_id=UUID(project_id), org_id=claims.org_id, user_id=claims.subject_user_id,
+        include_archived=include_archived,
+    )
     return DataResponse(data=[_to_response(b) for b in boards])
 
 
 @router.get("/boards/{board_id}", response_model=DataResponse[BoardResponse])
 async def get_board(
     board_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
-    board = await service.get(board_id=UUID(board_id))
+    board = await service.get_for_actor(
+        board_id=UUID(board_id), org_id=claims.org_id, user_id=claims.subject_user_id
+    )
     return DataResponse(data=_to_response(board))
 
 
@@ -72,6 +80,7 @@ async def update_board(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     board = await service.update(board_id=UUID(board_id), actor_user_id=claims.subject_user_id, name=request.name, description=request.description)
     return DataResponse(data=_to_response(board))
 
@@ -83,6 +92,7 @@ async def update_board_settings(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     board = await service.update_settings(board_id=UUID(board_id), actor_user_id=claims.subject_user_id, patch=request.patch)
     return DataResponse(data=_to_response(board))
 
@@ -94,6 +104,7 @@ async def change_swimlane_strategy(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     board = await service.change_swimlane_strategy(board_id=UUID(board_id), actor_user_id=claims.subject_user_id, strategy=SwimlaneStrategy(request.strategy))
     return DataResponse(data=_to_response(board))
 
@@ -104,6 +115,7 @@ async def archive_board(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     board = await service.archive(board_id=UUID(board_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(board))
 
@@ -114,6 +126,7 @@ async def restore_board(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> DataResponse[BoardResponse]:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     board = await service.restore(board_id=UUID(board_id), actor_user_id=claims.subject_user_id)
     return DataResponse(data=_to_response(board))
 
@@ -124,4 +137,5 @@ async def delete_board(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: BoardService = Depends(deps.get_board_service),
 ) -> None:
+    await service.assert_board_belongs_to_org(board_id=UUID(board_id), org_id=claims.org_id)
     await service.delete(board_id=UUID(board_id), actor_user_id=claims.subject_user_id)

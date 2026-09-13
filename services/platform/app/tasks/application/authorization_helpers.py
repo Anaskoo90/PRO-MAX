@@ -31,13 +31,19 @@ class TaskAuthorization:
         return project
 
     async def can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="task", action="update"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="task", action="update"
+        ):
             return True
         member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
         return member is not None and member.status == "active" and member.role in _MANAGING_ROLES
 
     async def can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="task", action="read"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="task", action="read"
+        ):
             return True
         member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
         return member is not None and member.status == "active"

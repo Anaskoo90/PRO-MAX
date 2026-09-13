@@ -3,6 +3,7 @@ import pytest
 from app.tasks.application.ports import ProjectMemberSummary, ProjectSummary
 from app.tasks.application.task_ordering import AutoOrderStrategy, TaskOrderingService
 from app.tasks.domain.entities import Task
+from app.tasks.domain.exceptions import TaskNotFoundError
 from app.tasks.domain.workflow import TaskPriority
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
@@ -75,3 +76,23 @@ async def test_auto_order_by_priority_does_not_change_stored_position(context) -
     # stored positions untouched
     assert low.position == 1.0
     assert critical.position == 2.0
+
+
+@pytest.mark.asyncio
+async def test_move_rejects_neighbor_from_another_project(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    moved = Task.create(project_id=project_id, org_id=org_id, title="Moved", position=100.0)
+    foreign = Task.create(
+        project_id=EntityId(new_uuid7()), org_id=OrgId(new_uuid7()), title="Foreign", position=200.0
+    )
+    uow.tasks.tasks[moved.id] = moved
+    uow.tasks.tasks[foreign.id] = foreign
+    service = _make_service(uow, project_context)
+
+    with pytest.raises(TaskNotFoundError):
+        await service.move_task(
+            task_id=moved.id,
+            actor_user_id=actor_id,
+            previous_task_id=foreign.id,
+            next_task_id=None,
+        )

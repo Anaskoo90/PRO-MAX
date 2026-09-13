@@ -34,29 +34,45 @@ class BoardAuthorization:
         return member is not None and member.status == "active" and member.role in _MANAGING_ROLES
 
     async def can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="board", action="view"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="board", action="view"
+        ):
             return True
         member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
         return member is not None and member.status == "active"
 
     async def can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="board", action="manage"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="board", action="manage"
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def can_move_tasks(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="board", action="move_tasks"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="board", action="move_tasks"
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def can_manage_sprint(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="board", action="manage_sprint"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="board", action="manage_sprint"
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def assert_can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_manage(project_id=project_id, org_id=org_id, user_id=user_id):
             raise InsufficientBoardPermissionError(_MANAGING_ROLES)
+
+    async def assert_can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        if not await self.can_view(project_id=project_id, org_id=org_id, user_id=user_id):
+            raise InsufficientBoardPermissionError(("any active project member",))
 
     async def assert_can_move_tasks(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_move_tasks(project_id=project_id, org_id=org_id, user_id=user_id):
