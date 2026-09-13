@@ -33,6 +33,7 @@ _DOMAIN_STATUS_MAP: dict[type[GuildDeskError], int] = {
 
 _DOMAIN_CODE_STATUS_MAP: dict[ErrorCode, int] = {
     ErrorCode.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+    ErrorCode.RATE_LIMITED: status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 

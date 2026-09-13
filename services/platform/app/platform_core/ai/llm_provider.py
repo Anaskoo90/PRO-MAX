@@ -9,8 +9,11 @@ harmonization gap between AI Gateway, Payment Center, and Discord Adapter.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Protocol
+from typing import Any, Protocol
+
+from app.platform_core.errors.infrastructure_exceptions import InfrastructureError
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +31,7 @@ class LlmCompletionResult:
     finish_reason: str
 
 
-class LlmProviderError(Exception):
+class LlmProviderError(InfrastructureError):
     pass
 
 

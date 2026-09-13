@@ -14,7 +14,9 @@ def _set_required_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY", _FIELD_ENCRYPTION_KEY)
 
 
-def test_jwt_signing_key_is_required_and_loaded_from_secret_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jwt_signing_key_is_required_and_loaded_from_secret_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _set_required_configuration(monkeypatch)
 
     settings = PlatformSettings(_env_file=None)
@@ -64,7 +66,9 @@ def test_blank_smtp_credentials_do_not_enable_authentication(
     assert settings.smtp_password is None
 
 
-def test_token_pepper_and_field_encryption_key_are_required(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_token_pepper_and_field_encryption_key_are_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _set_required_configuration(monkeypatch)
     monkeypatch.delenv("GUILDDESK_SECRET_TOKEN_HASH_PEPPER")
     monkeypatch.delenv("GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY")
@@ -105,6 +109,40 @@ def test_s3_credentials_must_be_configured_as_a_pair(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(ValueError, match="must be configured together"):
         PlatformSettings(_env_file=None)
+
+
+def test_enabled_ai_provider_requires_its_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.delenv("AI_OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="ai_openai_api_key"):
+        PlatformSettings(_env_file=None)
+
+
+def test_ai_fallback_requires_a_distinct_configured_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.setenv("AI_OPENAI_API_KEY", "openai-test")
+    monkeypatch.setenv("AI_FALLBACK_PROVIDER", "anthropic")
+    monkeypatch.delenv("AI_ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="ai_anthropic_api_key"):
+        PlatformSettings(_env_file=None)
+
+
+def test_blank_ai_keys_keep_gateway_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("AI_OPENAI_API_KEY", "")
+    monkeypatch.setenv("AI_ANTHROPIC_API_KEY", "")
+
+    settings = PlatformSettings(_env_file=None)
+
+    assert settings.ai_provider == "disabled"
+    assert settings.ai_openai_api_key is None
+    assert settings.ai_anthropic_api_key is None
 
 
 def test_production_configuration_rejects_local_file_storage(

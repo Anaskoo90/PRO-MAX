@@ -97,6 +97,22 @@ class PlatformSettings(BaseSettings):
     s3_access_key: SecretStr | None = None
     s3_secret_key: SecretStr | None = None
 
+    ai_provider: Literal["disabled", "openai", "anthropic"] = "disabled"
+    ai_fallback_provider: Literal["openai", "anthropic"] | None = None
+    ai_openai_api_key: SecretStr | None = None
+    ai_openai_base_url: AnyHttpUrl = "https://api.openai.com/v1"
+    ai_openai_model: str = "gpt-4o-mini"
+    ai_openai_embedding_model: str = "text-embedding-3-small"
+    ai_openai_embedding_dimensions: int = Field(default=1536, gt=0)
+    ai_anthropic_api_key: SecretStr | None = None
+    ai_anthropic_base_url: AnyHttpUrl = "https://api.anthropic.com/v1"
+    ai_anthropic_model: str = "claude-3-5-haiku-latest"
+    ai_anthropic_version: str = "2023-06-01"
+    ai_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    ai_max_output_tokens: int = Field(default=4096, ge=1, le=32768)
+    ai_requests_per_minute: int = Field(default=20, ge=1, le=1000)
+    ai_max_prompt_characters: int = Field(default=50000, ge=1000, le=1000000)
+
     otel_exporter_endpoint: str | None = None
 
     @field_validator(
@@ -110,6 +126,9 @@ class PlatformSettings(BaseSettings):
         "s3_bucket",
         "s3_access_key",
         "s3_secret_key",
+        "ai_fallback_provider",
+        "ai_openai_api_key",
+        "ai_anthropic_api_key",
         mode="before",
     )
     @classmethod
@@ -152,6 +171,27 @@ class PlatformSettings(BaseSettings):
             raise ValueError("s3_access_key and s3_secret_key must be configured together")
         if self.storage_backend == "s3" and not self.s3_bucket:
             raise ValueError("s3_bucket must be configured when storage_backend is 's3'")
+        configured_ai_keys = {
+            "openai": self.ai_openai_api_key,
+            "anthropic": self.ai_anthropic_api_key,
+        }
+        if self.ai_provider != "disabled" and configured_ai_keys[self.ai_provider] is None:
+            raise ValueError(
+                f"ai_{self.ai_provider}_api_key must be configured when "
+                f"ai_provider is '{self.ai_provider}'"
+            )
+        if self.ai_provider == "disabled" and self.ai_fallback_provider is not None:
+            raise ValueError("ai_fallback_provider requires an enabled ai_provider")
+        if self.ai_fallback_provider == self.ai_provider:
+            raise ValueError("ai_fallback_provider must differ from ai_provider")
+        if (
+            self.ai_fallback_provider is not None
+            and configured_ai_keys[self.ai_fallback_provider] is None
+        ):
+            raise ValueError(
+                f"ai_{self.ai_fallback_provider}_api_key must be configured when "
+                "that provider is selected as fallback"
+            )
         if self.environment.is_production_like and not self.cors_allowed_origins:
             raise ValueError(
                 "cors_allowed_origins must be explicitly set in staging/production"

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from app.platform_core.errors.infrastructure_exceptions import InfrastructureError
 
-class EmbeddingProviderError(Exception):
+
+class EmbeddingProviderError(InfrastructureError):
     pass
 
 

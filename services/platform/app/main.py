@@ -38,6 +38,7 @@ container = ServiceContainer()
 lifecycle = LifecycleManager()
 health_registry = HealthCheckRegistry()
 
+from app.ai_gateway.composition import AI_PERMISSION_CATALOG, AiGatewayModule  # noqa: E402
 from app.boards.composition import BOARDS_PERMISSION_CATALOG, BoardsModule  # noqa: E402
 from app.discord_integration.composition import (  # noqa: E402
     DISCORD_PERMISSION_CATALOG,
@@ -62,9 +63,14 @@ notifications_module = NotificationsModule(settings, identity_module)
 projects_module = ProjectsModule(settings, identity_module)
 tasks_module = TasksModule(settings, identity_module, projects_module)
 boards_module = BoardsModule(settings, identity_module, projects_module, tasks_module)
-workflow_engine_module = WorkflowEngineModule(settings, identity_module, projects_module, tasks_module, boards_module)
-discord_integration_module = DiscordIntegrationModule(DiscordIntegrationSettings(), identity_module)
+workflow_engine_module = WorkflowEngineModule(
+    settings, identity_module, projects_module, tasks_module, boards_module
+)
+discord_integration_module = DiscordIntegrationModule(
+    DiscordIntegrationSettings(), identity_module
+)
 ticket_system_module = TicketSystemModule(settings, identity_module, discord_integration_module)
+ai_gateway_module = AiGatewayModule(settings, identity_module)
 
 
 @asynccontextmanager
@@ -97,6 +103,7 @@ async def lifespan(app: FastAPI):
         extra_permissions=(
             *PROJECTS_PERMISSION_CATALOG, *TASKS_PERMISSION_CATALOG, *BOARDS_PERMISSION_CATALOG,
             *WORKFLOW_PERMISSION_CATALOG, *DISCORD_PERMISSION_CATALOG, *TICKET_PERMISSION_CATALOG,
+            *AI_PERMISSION_CATALOG,
         )
     )
     await tasks_module.job_scheduler.start()
@@ -109,6 +116,7 @@ async def lifespan(app: FastAPI):
         await workflow_engine_module.job_scheduler.stop()
         await boards_module.job_scheduler.stop()
         await tasks_module.job_scheduler.stop()
+        await ai_gateway_module.shutdown()
         await identity_module.shutdown()
         await lifecycle.shutdown()
         await logger.ainfo("platform_core_shutdown_complete")
@@ -154,6 +162,8 @@ def create_app() -> FastAPI:
     discord_integration_module.mount(app)
     ticket_system_module.register(container)
     ticket_system_module.mount(app)
+    ai_gateway_module.register(container)
+    ai_gateway_module.mount(app)
 
     @app.get("/health/live", tags=["observability"])
     async def liveness() -> dict[str, str]:
