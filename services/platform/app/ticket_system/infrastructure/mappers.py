@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
-from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketStatus
+from app.ticket_system.domain.entities import (
+    Ticket,
+    TicketCategory,
+    TicketMessage,
+    TicketStatus,
+)
 from app.ticket_system.infrastructure.orm_models import (
     TicketAuditLogOrmModel,
     TicketCategoryOrmModel,
+    TicketMessageOrmModel,
     TicketOrmModel,
 )
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 
 def ticket_to_domain(row: TicketOrmModel) -> Ticket:
@@ -76,6 +82,34 @@ def ticket_category_to_orm(
     row.staff_discord_role_ids = list(entity.staff_discord_role_ids)
     row.is_active = entity.is_active
     return row
+
+
+def ticket_message_to_domain(row: TicketMessageOrmModel) -> TicketMessage:
+    return TicketMessage(
+        id=EntityId(row.id),
+        org_id=OrgId(row.org_id),
+        ticket_id=EntityId(row.ticket_id),
+        body=row.body,
+        author_discord_user_id=row.author_discord_user_id,
+        author_user_id=UserId(row.author_user_id) if row.author_user_id else None,
+        discord_message_id=row.discord_message_id,
+        is_internal=row.is_internal,
+        created_at=row.created_at,
+    )
+
+
+def ticket_message_to_orm(entity: TicketMessage) -> TicketMessageOrmModel:
+    return TicketMessageOrmModel(
+        id=entity.id,
+        org_id=entity.org_id,
+        ticket_id=entity.ticket_id,
+        body=entity.body,
+        author_discord_user_id=entity.author_discord_user_id,
+        author_user_id=entity.author_user_id,
+        discord_message_id=entity.discord_message_id,
+        is_internal=entity.is_internal,
+        created_at=entity.created_at,
+    )
 
 
 def audit_log_to_domain(row: TicketAuditLogOrmModel) -> TicketAuditLogRecord:

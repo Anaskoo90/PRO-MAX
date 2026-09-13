@@ -11,8 +11,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Widened in Phase 1B (migration 0009) to add 'claimed' — same incremental
@@ -100,6 +110,41 @@ class TicketCategoryOrmModel(TicketSystemBase):
     staff_discord_role_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class TicketMessageOrmModel(TicketSystemBase):
+    __tablename__ = "ticket_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "discord_message_id",
+            name="uq_ticket_messages_discord_message_id",
+        ),
+        Index(
+            "ix_ticket_messages_org_ticket_created_at",
+            "org_id",
+            "ticket_id",
+            "created_at",
+        ),
+        {"schema": "ticket_system"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("ticket_system.tickets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    body: Mapped[str] = mapped_column(String(length=10_000), nullable=False)
+    author_discord_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    discord_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_internal: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=text("now()")
+    )
 
 
 class TicketAuditLogOrmModel(TicketSystemBase):

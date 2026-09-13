@@ -27,6 +27,7 @@ _ENABLED_EXTENSIONS: tuple[str, ...] = ("discord_bot.cogs.ping", "discord_bot.co
 class GuildDeskBot(commands.Bot):
     def __init__(self, settings: DiscordBotSettings) -> None:
         intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,

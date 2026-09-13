@@ -6,18 +6,19 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.platform_core.api.sorting import SortField
+from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
+from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
-from app.ticket_system.domain.entities import Ticket, TicketCategory
+from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
 from app.ticket_system.infrastructure import mappers
 from app.ticket_system.infrastructure.orm_models import (
     TicketAuditLogOrmModel,
     TicketCategoryOrmModel,
+    TicketMessageOrmModel,
     TicketNumberSequenceOrmModel,
     TicketOrmModel,
 )
-from app.platform_core.api.sorting import SortField
-from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
-from app.platform_core.shared_kernel.types import EntityId, OrgId
 
 # Only fields with a real, indexed column behind them — no speculative
 # sort/filter surface ahead of columns that don't exist yet (e.g. priority,
@@ -159,6 +160,92 @@ class SqlAlchemyTicketCategoryRepository:
         mappers.ticket_category_to_orm(category, row)
         row.version = category.version + 1
         category.version += 1
+
+
+class SqlAlchemyTicketMessageRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_discord_message_id(
+        self, discord_message_id: str
+    ) -> TicketMessage | None:
+        stmt = select(TicketMessageOrmModel).where(
+            TicketMessageOrmModel.discord_message_id == discord_message_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return mappers.ticket_message_to_domain(row) if row else None
+
+    async def list_for_ticket(
+        self,
+        *,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        include_internal: bool,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[TicketMessage], int]:
+        filters = [
+            TicketMessageOrmModel.org_id == org_id,
+            TicketMessageOrmModel.ticket_id == ticket_id,
+        ]
+        if not include_internal:
+            filters.append(TicketMessageOrmModel.is_internal.is_(False))
+
+        count_stmt = (
+            select(func.count())
+            .select_from(TicketMessageOrmModel)
+            .where(*filters)
+        )
+        total = (await self._session.execute(count_stmt)).scalar_one()
+        stmt = (
+            select(TicketMessageOrmModel)
+            .where(*filters)
+            .order_by(
+                TicketMessageOrmModel.created_at.asc(),
+                TicketMessageOrmModel.id.asc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [mappers.ticket_message_to_domain(row) for row in rows], total
+
+    async def add(self, message: TicketMessage) -> None:
+        self._session.add(mappers.ticket_message_to_orm(message))
+
+    async def add_idempotent(
+        self, message: TicketMessage
+    ) -> tuple[TicketMessage, bool]:
+        if message.discord_message_id is None:
+            await self.add(message)
+            return message, True
+
+        stmt = (
+            pg_insert(TicketMessageOrmModel)
+            .values(
+                id=message.id,
+                org_id=message.org_id,
+                ticket_id=message.ticket_id,
+                body=message.body,
+                author_discord_user_id=message.author_discord_user_id,
+                author_user_id=message.author_user_id,
+                discord_message_id=message.discord_message_id,
+                is_internal=message.is_internal,
+                created_at=message.created_at,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[TicketMessageOrmModel.discord_message_id]
+            )
+            .returning(TicketMessageOrmModel.id)
+        )
+        inserted_id = (await self._session.execute(stmt)).scalar_one_or_none()
+        if inserted_id is not None:
+            return message, True
+
+        existing = await self.get_by_discord_message_id(message.discord_message_id)
+        if existing is None:  # Defensive: ON CONFLICT guarantees the row exists.
+            raise RuntimeError("Conflicting Discord message could not be loaded")
+        return existing, False
 
 
 class SqlAlchemyTicketAuditLogRepository:

@@ -19,10 +19,15 @@ Authentication is *not* reimplemented here:
 
 from __future__ import annotations
 
-from app.discord_integration.presentation.bot_authentication import require_bot_service_secret  # noqa: F401
-from app.identity.presentation.deps import get_current_user_claims  # noqa: F401  (re-exported for routers)
+from app.discord_integration.presentation.bot_authentication import (
+    require_bot_service_secret,  # noqa: F401
+)
+from app.identity.presentation.deps import (
+    get_current_user_claims,  # noqa: F401  (re-exported for routers)
+)
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
+from app.ticket_system.application.ticket_messages import TicketMessageService
 
 
 def get_ticket_lifecycle_service() -> TicketLifecycleService:
@@ -31,3 +36,7 @@ def get_ticket_lifecycle_service() -> TicketLifecycleService:
 
 def get_ticket_category_service() -> TicketCategoryService:
     raise NotImplementedError("TicketCategoryService dependency not wired")
+
+
+def get_ticket_message_service() -> TicketMessageService:
+    raise NotImplementedError("TicketMessageService dependency not wired")

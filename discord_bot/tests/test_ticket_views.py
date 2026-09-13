@@ -8,6 +8,7 @@ from discord_bot.services.api_client import (
     TicketCategoriesResult,
     TicketCategoryData,
     TicketData,
+    TicketMessageResult,
     TicketResult,
 )
 from discord_bot.views.ticket_views import (
@@ -25,6 +26,9 @@ def _bot() -> MagicMock:
         return_value=TicketCategoriesResult(ok=True, categories=[])
     )
     bot.api_client.create_ticket = AsyncMock()
+    bot.api_client.add_ticket_message_by_channel = AsyncMock(
+        return_value=TicketMessageResult(ok=True)
+    )
     bot.api_client.get_ticket_by_channel = AsyncMock()
     bot.api_client.claim_ticket = AsyncMock()
     bot.api_client.unclaim_ticket = AsyncMock()
@@ -47,6 +51,7 @@ def _interaction(*, channel_id: int = 222, guild_id: int = 111, user_id: int = 9
     interaction.guild.id = guild_id
     interaction.user = MagicMock(spec=discord.Member)
     interaction.user.id = user_id
+    interaction.id = 888
     interaction.response = AsyncMock()
     interaction.followup = AsyncMock()
     return interaction
@@ -97,6 +102,7 @@ async def test_form_modal_creates_a_channel_and_ticket_on_submit() -> None:
     interaction = _interaction()
     interaction.guild.get_channel.return_value = None
     created_channel = MagicMock(mention="#billing-user")
+    created_channel.id = 222
     created_channel.send = AsyncMock()
     interaction.guild.create_text_channel = AsyncMock(return_value=created_channel)
 
@@ -104,6 +110,12 @@ async def test_form_modal_creates_a_channel_and_ticket_on_submit() -> None:
 
     interaction.guild.create_text_channel.assert_awaited_once()
     bot.api_client.create_ticket.assert_awaited_once()
+    bot.api_client.add_ticket_message_by_channel.assert_awaited_once_with(
+        discord_channel_id="222",
+        body="My billing issue",
+        author_discord_user_id="999",
+        discord_message_id="interaction:888",
+    )
     created_channel.send.assert_awaited_once()
     interaction.followup.send.assert_awaited()
 

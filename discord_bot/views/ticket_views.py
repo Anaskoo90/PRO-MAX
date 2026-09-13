@@ -45,7 +45,7 @@ _MAX_PANEL_BUTTONS = 5
 _PERMISSION_REQUIRED_MESSAGE = "You need a configured staff role (or 'Manage Server') to do that."
 
 
-async def _guild_staff_role_ids(bot: "GuildDeskBot", discord_guild_id: str) -> list[str]:
+async def _guild_staff_role_ids(bot: GuildDeskBot, discord_guild_id: str) -> list[str]:
     result = await bot.api_client.list_ticket_categories(discord_guild_id=discord_guild_id)
     if not result.ok:
         return []
@@ -63,7 +63,7 @@ class TicketFormModal(discord.ui.Modal):
         label="What do you need help with?", style=discord.TextStyle.paragraph, max_length=1000,
     )
 
-    def __init__(self, *, bot: "GuildDeskBot", category: TicketCategoryData) -> None:
+    def __init__(self, *, bot: GuildDeskBot, category: TicketCategoryData) -> None:
         super().__init__(title=f"New {category.name} Ticket"[:45])
         self._bot = bot
         self._category = category
@@ -105,6 +105,22 @@ class TicketFormModal(discord.ui.Modal):
             )
             return
 
+        archived = await self._bot.api_client.add_ticket_message_by_channel(
+            discord_channel_id=str(channel.id),
+            body=self.description.value,
+            author_discord_user_id=str(interaction.user.id),
+            discord_message_id=f"interaction:{interaction.id}",
+        )
+        if not archived.ok:
+            _logger.warning(
+                "ticket_initial_message_archive_failed",
+                extra={
+                    "ticket_id": result.ticket.id,
+                    "discord_channel_id": str(channel.id),
+                    "reason": archived.error_message,
+                },
+            )
+
         embed = build_status_embed(
             title=f"Ticket #{result.ticket.ticket_number}", healthy=True, description=self.description.value,
         )
@@ -113,7 +129,7 @@ class TicketFormModal(discord.ui.Modal):
 
 
 class _CategoryButton(discord.ui.Button):
-    def __init__(self, *, bot: "GuildDeskBot", category: TicketCategoryData) -> None:
+    def __init__(self, *, bot: GuildDeskBot, category: TicketCategoryData) -> None:
         super().__init__(label=category.name[:80], style=discord.ButtonStyle.primary)
         self._bot = bot
         self._category = category
@@ -130,7 +146,7 @@ class TicketPanelView(discord.ui.View):
     panel automatically — a rare admin action, unlike ticket control
     views, which must keep working forever once posted."""
 
-    def __init__(self, *, bot: "GuildDeskBot", categories: list[TicketCategoryData]) -> None:
+    def __init__(self, *, bot: GuildDeskBot, categories: list[TicketCategoryData]) -> None:
         super().__init__(timeout=None)
         for category in categories[:_MAX_PANEL_BUTTONS]:
             self.add_item(_CategoryButton(bot=bot, category=category))
@@ -141,7 +157,7 @@ class TicketTransferSelectView(discord.ui.View):
     Discord buttons can't take arbitrary parameters, so picking the new
     claimant needs its own small interaction step."""
 
-    def __init__(self, *, bot: "GuildDeskBot", ticket_id: str, timeout: float | None = 60.0) -> None:
+    def __init__(self, *, bot: GuildDeskBot, ticket_id: str, timeout: float | None = 60.0) -> None:
         super().__init__(timeout=timeout)
         self._bot = bot
         self._ticket_id = ticket_id
@@ -174,7 +190,7 @@ class TicketControlView(discord.ui.View):
     every ticket channel identically since no per-ticket state is held
     here."""
 
-    def __init__(self, *, bot: "GuildDeskBot") -> None:
+    def __init__(self, *, bot: GuildDeskBot) -> None:
         super().__init__(timeout=None)
         self._bot = bot
 

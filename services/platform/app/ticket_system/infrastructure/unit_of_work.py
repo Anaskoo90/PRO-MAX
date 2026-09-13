@@ -10,6 +10,7 @@ from app.ticket_system.infrastructure.outbox import SqlAlchemyOutboxWriter
 from app.ticket_system.infrastructure.repositories import (
     SqlAlchemyTicketAuditLogRepository,
     SqlAlchemyTicketCategoryRepository,
+    SqlAlchemyTicketMessageRepository,
     SqlAlchemyTicketRepository,
 )
 
@@ -20,13 +21,15 @@ class TicketUnitOfWork:
         self.session: AsyncSession | None = None
         self.tickets: SqlAlchemyTicketRepository | None = None
         self.ticket_categories: SqlAlchemyTicketCategoryRepository | None = None
+        self.ticket_messages: SqlAlchemyTicketMessageRepository | None = None
         self.audit_logs: SqlAlchemyTicketAuditLogRepository | None = None
         self.outbox: SqlAlchemyOutboxWriter | None = None
 
-    async def __aenter__(self) -> "TicketUnitOfWork":
+    async def __aenter__(self) -> TicketUnitOfWork:
         self.session = self._session_factory()
         self.tickets = SqlAlchemyTicketRepository(self.session)
         self.ticket_categories = SqlAlchemyTicketCategoryRepository(self.session)
+        self.ticket_messages = SqlAlchemyTicketMessageRepository(self.session)
         self.audit_logs = SqlAlchemyTicketAuditLogRepository(self.session)
         self.outbox = SqlAlchemyOutboxWriter(self.session, event_type="ticket_system.integration_event")
         return self

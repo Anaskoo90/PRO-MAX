@@ -3,9 +3,9 @@ application ports — mirrors tests/boards/unit/fakes.py exactly."""
 
 from __future__ import annotations
 
-from app.ticket_system.domain.entities import Ticket, TicketCategory
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.shared_kernel.types import EntityId, OrgId
+from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
 
 
 class FakeTicketRepository:
@@ -87,6 +87,57 @@ class FakeTicketCategoryRepository:
         self.categories[category.id] = category
 
 
+class FakeTicketMessageRepository:
+    def __init__(self) -> None:
+        self.messages: dict[EntityId, TicketMessage] = {}
+
+    async def get_by_discord_message_id(
+        self, discord_message_id: str
+    ) -> TicketMessage | None:
+        return next(
+            (
+                message
+                for message in self.messages.values()
+                if message.discord_message_id == discord_message_id
+            ),
+            None,
+        )
+
+    async def list_for_ticket(
+        self,
+        *,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        include_internal: bool,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[TicketMessage], int]:
+        matches = [
+            message
+            for message in self.messages.values()
+            if message.org_id == org_id and message.ticket_id == ticket_id
+        ]
+        if not include_internal:
+            matches = [message for message in matches if not message.is_internal]
+        matches.sort(key=lambda message: (message.created_at, message.id))
+        return matches[offset : offset + limit], len(matches)
+
+    async def add(self, message: TicketMessage) -> None:
+        self.messages[message.id] = message
+
+    async def add_idempotent(
+        self, message: TicketMessage
+    ) -> tuple[TicketMessage, bool]:
+        if message.discord_message_id is not None:
+            existing = await self.get_by_discord_message_id(
+                message.discord_message_id
+            )
+            if existing is not None:
+                return existing, False
+        await self.add(message)
+        return message, True
+
+
 class FakeTicketAuditLogRepository:
     def __init__(self) -> None:
         self.records: list = []
@@ -110,10 +161,11 @@ class FakeTicketUnitOfWork:
     def __init__(self) -> None:
         self.tickets = FakeTicketRepository()
         self.ticket_categories = FakeTicketCategoryRepository()
+        self.ticket_messages = FakeTicketMessageRepository()
         self.audit_logs = FakeTicketAuditLogRepository()
         self.outbox = FakeOutboxWriter()
 
-    async def __aenter__(self) -> "FakeTicketUnitOfWork":
+    async def __aenter__(self) -> FakeTicketUnitOfWork:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

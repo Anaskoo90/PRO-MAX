@@ -17,13 +17,16 @@ from app.platform_core.errors.domain_exceptions import BusinessRuleViolationErro
 from app.platform_core.security.token import TokenClaims
 from app.platform_core.shared_kernel.dtos import PagedResult
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
+from app.ticket_system.application.ticket_messages import TicketMessageService
 from app.ticket_system.domain.value_objects import TicketActor
 from app.ticket_system.presentation import deps
 from app.ticket_system.presentation.schemas import (
     ClaimTicketRequest,
     CloseTicketRequest,
+    CreateTicketMessageRequest,
     CreateTicketRequest,
     TicketListItemResponse,
+    TicketMessageResponse,
     TicketResponse,
     TransferTicketRequest,
 )
@@ -53,6 +56,20 @@ def _to_list_item(dto) -> TicketListItemResponse:
         discord_channel_id=dto.discord_channel_id, opener_discord_user_id=dto.opener_discord_user_id,
         claimed_by_discord_user_id=dto.claimed_by_discord_user_id, created_at=dto.created_at,
         closed_at=dto.closed_at,
+    )
+
+
+def _to_message_response(dto) -> TicketMessageResponse:
+    return TicketMessageResponse(
+        id=dto.id,
+        org_id=dto.org_id,
+        ticket_id=dto.ticket_id,
+        body=dto.body,
+        author_discord_user_id=dto.author_discord_user_id,
+        author_user_id=dto.author_user_id,
+        discord_message_id=dto.discord_message_id,
+        is_internal=dto.is_internal,
+        created_at=dto.created_at,
     )
 
 
@@ -125,6 +142,60 @@ async def get_ticket(
     parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
     ticket = await service.get(org_id=parsed_org_id, actor_user_id=claims.subject_user_id, ticket_id=UUID(ticket_id))
     return DataResponse(data=_to_response(ticket))
+
+
+@router.get(
+    "/organizations/{org_id}/tickets/{ticket_id}/messages",
+    response_model=PagedResponse[TicketMessageResponse],
+)
+async def list_ticket_messages(
+    org_id: str,
+    ticket_id: str,
+    include_internal: bool = False,
+    page: PageParams = Depends(page_params),
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketMessageService = Depends(deps.get_ticket_message_service),
+) -> PagedResponse[TicketMessageResponse]:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    result = await service.list_messages(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+        include_internal=include_internal,
+        page=page.page,
+        page_size=page.page_size,
+    )
+    return PagedResponse.from_paged_result(
+        PagedResult(
+            items=[_to_message_response(message) for message in result.items],
+            total=result.total,
+            page=result.page,
+            page_size=result.page_size,
+        )
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/tickets/{ticket_id}/messages",
+    response_model=DataResponse[TicketMessageResponse],
+    status_code=201,
+)
+async def add_ticket_message(
+    org_id: str,
+    ticket_id: str,
+    request: CreateTicketMessageRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketMessageService = Depends(deps.get_ticket_message_service),
+) -> DataResponse[TicketMessageResponse]:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    message = await service.add_message(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+        body=request.body,
+        is_internal=request.is_internal,
+    )
+    return DataResponse(data=_to_message_response(message))
 
 
 @router.post(

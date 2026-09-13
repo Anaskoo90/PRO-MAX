@@ -10,18 +10,23 @@ from uuid import UUID
 
 from fastapi import Depends
 
-from app.platform_core.api.responses import DataResponse
+from app.platform_core.api.pagination import PageParams, page_params
+from app.platform_core.api.responses import DataResponse, PagedResponse
 from app.platform_core.api.versioning import versioned_router
+from app.platform_core.shared_kernel.dtos import PagedResult
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
+from app.ticket_system.application.ticket_messages import TicketMessageService
 from app.ticket_system.domain.value_objects import TicketActor
 from app.ticket_system.presentation import deps
 from app.ticket_system.presentation.schemas import (
     ClaimTicketViaBotRequest,
     CloseTicketViaBotRequest,
     CreateTicketCategoryRequest,
+    CreateTicketMessageViaBotRequest,
     CreateTicketViaBotRequest,
     TicketCategoryResponse,
+    TicketMessageResponse,
     TicketResponse,
     TransferTicketViaBotRequest,
 )
@@ -45,6 +50,20 @@ def _to_category_response(dto) -> TicketCategoryResponse:
         id=dto.id, org_id=dto.org_id, discord_guild_id=dto.discord_guild_id, name=dto.name,
         discord_category_channel_id=dto.discord_category_channel_id,
         staff_discord_role_ids=dto.staff_discord_role_ids, is_active=dto.is_active,
+    )
+
+
+def _to_message_response(dto) -> TicketMessageResponse:
+    return TicketMessageResponse(
+        id=dto.id,
+        org_id=dto.org_id,
+        ticket_id=dto.ticket_id,
+        body=dto.body,
+        author_discord_user_id=dto.author_discord_user_id,
+        author_user_id=dto.author_user_id,
+        discord_message_id=dto.discord_message_id,
+        is_internal=dto.is_internal,
+        created_at=dto.created_at,
     )
 
 
@@ -76,6 +95,73 @@ async def create_ticket_via_bot(
         title=request.title, opener=TicketActor(discord_user_id=request.opener_discord_user_id),
     )
     return DataResponse(data=_to_response(ticket))
+
+
+@router.get(
+    "/discord/tickets/{ticket_id}/messages",
+    response_model=PagedResponse[TicketMessageResponse],
+    dependencies=[Depends(deps.require_bot_service_secret)],
+)
+async def list_ticket_messages_via_bot(
+    ticket_id: str,
+    page: PageParams = Depends(page_params),
+    service: TicketMessageService = Depends(deps.get_ticket_message_service),
+) -> PagedResponse[TicketMessageResponse]:
+    messages, total = await service.list_messages_from_bot(
+        ticket_id=UUID(ticket_id),
+        offset=page.offset,
+        limit=page.page_size,
+    )
+    return PagedResponse.from_paged_result(
+        PagedResult(
+            items=[_to_message_response(message) for message in messages],
+            total=total,
+            page=page.page,
+            page_size=page.page_size,
+        )
+    )
+
+
+@router.post(
+    "/discord/tickets/{ticket_id}/messages",
+    response_model=DataResponse[TicketMessageResponse],
+    status_code=201,
+    dependencies=[Depends(deps.require_bot_service_secret)],
+)
+async def add_ticket_message_via_bot(
+    ticket_id: str,
+    request: CreateTicketMessageViaBotRequest,
+    service: TicketMessageService = Depends(deps.get_ticket_message_service),
+) -> DataResponse[TicketMessageResponse]:
+    message = await service.add_message_from_bot(
+        ticket_id=UUID(ticket_id),
+        body=request.body,
+        author_discord_user_id=request.author_discord_user_id,
+        discord_message_id=request.discord_message_id,
+        is_internal=request.is_internal,
+    )
+    return DataResponse(data=_to_message_response(message))
+
+
+@router.post(
+    "/discord/tickets/by-channel/{discord_channel_id}/messages",
+    response_model=DataResponse[TicketMessageResponse],
+    status_code=201,
+    dependencies=[Depends(deps.require_bot_service_secret)],
+)
+async def add_ticket_message_by_channel_via_bot(
+    discord_channel_id: str,
+    request: CreateTicketMessageViaBotRequest,
+    service: TicketMessageService = Depends(deps.get_ticket_message_service),
+) -> DataResponse[TicketMessageResponse]:
+    message = await service.add_message_by_channel_from_bot(
+        discord_channel_id=discord_channel_id,
+        body=request.body,
+        author_discord_user_id=request.author_discord_user_id,
+        discord_message_id=request.discord_message_id,
+        is_internal=request.is_internal,
+    )
+    return DataResponse(data=_to_message_response(message))
 
 
 @router.post(

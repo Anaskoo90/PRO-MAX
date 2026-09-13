@@ -43,6 +43,71 @@ class TicketStatus(StrEnum):
     CLOSED = "closed"
 
 
+class TicketMessage:
+    """An immutable message in a ticket conversation.
+
+    Message bodies are deliberately kept out of audit metadata.  The
+    optional Discord message id gives the bot ingestion path an idempotency
+    key, since Discord events and HTTP retries can both be delivered more
+    than once.
+    """
+
+    def __init__(
+        self,
+        *,
+        id: EntityId,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        body: str,
+        author_discord_user_id: str | None = None,
+        author_user_id: UserId | None = None,
+        discord_message_id: str | None = None,
+        is_internal: bool = False,
+        created_at: datetime | None = None,
+    ) -> None:
+        if author_discord_user_id is None and author_user_id is None:
+            raise ValueError(
+                "TicketMessage requires at least one author identity"
+            )
+        normalized_body = body.strip()
+        if not normalized_body:
+            raise ValueError("Ticket message body must not be empty")
+        if len(normalized_body) > 10_000:
+            raise ValueError("Ticket message body must not exceed 10000 characters")
+
+        self.id = id
+        self.org_id = org_id
+        self.ticket_id = ticket_id
+        self.body = normalized_body
+        self.author_discord_user_id = author_discord_user_id
+        self.author_user_id = author_user_id
+        self.discord_message_id = discord_message_id
+        self.is_internal = is_internal
+        self.created_at = created_at or utcnow()
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        body: str,
+        author: TicketActor,
+        discord_message_id: str | None = None,
+        is_internal: bool = False,
+    ) -> TicketMessage:
+        return cls(
+            id=EntityId(new_uuid7()),
+            org_id=org_id,
+            ticket_id=ticket_id,
+            body=body,
+            author_discord_user_id=author.discord_user_id,
+            author_user_id=author.user_id,
+            discord_message_id=discord_message_id,
+            is_internal=is_internal,
+        )
+
+
 class Ticket(EventRecordingMixin):
     def __init__(
         self,
@@ -97,7 +162,7 @@ class Ticket(EventRecordingMixin):
         discord_channel_id: str,
         title: str,
         opener: TicketActor,
-    ) -> "Ticket":
+    ) -> Ticket:
         # No "at least one identity set" check here: TicketActor's own
         # __post_init__ already guarantees that for every instance that
         # exists, so a second check here would be unreachable.
@@ -210,7 +275,7 @@ class TicketCategory(EventRecordingMixin):
         name: str,
         discord_category_channel_id: str,
         staff_discord_role_ids: list[str],
-    ) -> "TicketCategory":
+    ) -> TicketCategory:
         return cls(
             id=EntityId(new_uuid7()),
             org_id=org_id,

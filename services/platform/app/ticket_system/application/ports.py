@@ -21,6 +21,7 @@ from app.platform_core.events.publisher import OutboxWriter
 from app.ticket_system.domain.repositories import (
     TicketAuditLogRepository,
     TicketCategoryRepository,
+    TicketMessageRepository,
     TicketRepository,
 )
 
@@ -28,10 +29,11 @@ from app.ticket_system.domain.repositories import (
 class TicketUnitOfWorkPort(Protocol):
     tickets: TicketRepository
     ticket_categories: TicketCategoryRepository
+    ticket_messages: TicketMessageRepository
     audit_logs: TicketAuditLogRepository
     outbox: OutboxWriter
 
-    async def __aenter__(self) -> "TicketUnitOfWorkPort": ...
+    async def __aenter__(self) -> TicketUnitOfWorkPort: ...
 
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
 

@@ -12,6 +12,7 @@ admin action, not a staff-role-gated one.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import discord
@@ -26,11 +27,37 @@ if TYPE_CHECKING:
     from discord_bot.client import GuildDeskBot
 
 _PERMISSION_REQUIRED_MESSAGE = "You need the 'Manage Server' permission in this server to use this command."
+_logger = logging.getLogger("discord_bot.cogs.tickets")
 
 
 class TicketsCog(commands.Cog):
-    def __init__(self, bot: "GuildDeskBot") -> None:
+    def __init__(self, bot: GuildDeskBot) -> None:
         self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if (
+            message.guild is None
+            or message.author.bot
+            or not message.content.strip()
+        ):
+            return
+
+        result = await self.bot.api_client.add_ticket_message_by_channel(
+            discord_channel_id=str(message.channel.id),
+            body=message.content,
+            author_discord_user_id=str(message.author.id),
+            discord_message_id=str(message.id),
+        )
+        if not result.ok and not result.not_a_ticket_channel:
+            _logger.warning(
+                "ticket_message_archive_failed",
+                extra={
+                    "discord_channel_id": str(message.channel.id),
+                    "discord_message_id": str(message.id),
+                    "reason": result.error_message,
+                },
+            )
 
     @app_commands.command(
         name="ticket-category-create", description="Create a ticket category for this server's support panel"
@@ -102,5 +129,5 @@ class TicketsCog(commands.Cog):
         await interaction.response.send_message("Panel posted.", ephemeral=True)
 
 
-async def setup(bot: "GuildDeskBot") -> None:
+async def setup(bot: GuildDeskBot) -> None:
     await bot.add_cog(TicketsCog(bot))

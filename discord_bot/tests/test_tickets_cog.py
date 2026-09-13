@@ -9,6 +9,7 @@ from discord_bot.services.api_client import (
     TicketCategoriesResult,
     TicketCategoryData,
     TicketCategoryResult,
+    TicketMessageResult,
 )
 
 
@@ -17,6 +18,7 @@ def _bot() -> MagicMock:
     bot.api_client = MagicMock()
     bot.api_client.create_ticket_category = AsyncMock()
     bot.api_client.list_ticket_categories = AsyncMock()
+    bot.api_client.add_ticket_message_by_channel = AsyncMock()
     return bot
 
 
@@ -102,3 +104,45 @@ async def test_panel_post_sends_the_panel_when_categories_exist() -> None:
 
     interaction.channel.send.assert_awaited_once()
     interaction.response.send_message.assert_awaited_once()
+
+
+async def test_human_ticket_channel_message_is_archived() -> None:
+    bot = _bot()
+    bot.api_client.add_ticket_message_by_channel.return_value = TicketMessageResult(
+        ok=True
+    )
+    message = MagicMock(spec=discord.Message)
+    message.guild = MagicMock(spec=discord.Guild)
+    message.author = MagicMock(spec=discord.Member)
+    message.author.bot = False
+    message.author.id = 333
+    message.channel = MagicMock(spec=discord.TextChannel)
+    message.channel.id = 222
+    message.id = 444
+    message.content = "Need help"
+
+    await TicketsCog(bot).on_message(message)
+
+    bot.api_client.add_ticket_message_by_channel.assert_awaited_once_with(
+        discord_channel_id="222",
+        body="Need help",
+        author_discord_user_id="333",
+        discord_message_id="444",
+    )
+
+
+async def test_bot_and_empty_messages_are_not_archived() -> None:
+    bot = _bot()
+    cog = TicketsCog(bot)
+    message = MagicMock(spec=discord.Message)
+    message.guild = MagicMock(spec=discord.Guild)
+    message.author = MagicMock(spec=discord.Member)
+    message.author.bot = True
+    message.content = "Bot output"
+
+    await cog.on_message(message)
+    message.author.bot = False
+    message.content = "   "
+    await cog.on_message(message)
+
+    bot.api_client.add_ticket_message_by_channel.assert_not_awaited()

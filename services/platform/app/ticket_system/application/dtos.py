@@ -35,3 +35,16 @@ class TicketCategoryDTO:
     discord_category_channel_id: str
     staff_discord_role_ids: list[str]
     is_active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TicketMessageDTO:
+    id: UUID
+    org_id: UUID
+    ticket_id: UUID
+    body: str
+    author_discord_user_id: str | None
+    author_user_id: UUID | None
+    discord_message_id: str | None
+    is_internal: bool
+    created_at: datetime

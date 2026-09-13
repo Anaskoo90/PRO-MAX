@@ -3,7 +3,10 @@ hierarchy exactly like every prior context's do."""
 
 from __future__ import annotations
 
-from app.platform_core.errors.domain_exceptions import BusinessRuleViolationError, EntityNotFoundError
+from app.platform_core.errors.domain_exceptions import (
+    BusinessRuleViolationError,
+    EntityNotFoundError,
+)
 from app.platform_core.shared_kernel.error_codes import ErrorCode
 
 
@@ -36,4 +39,20 @@ class GuildNotLinkedForTicketsError(BusinessRuleViolationError):
         super().__init__(
             "guild_not_linked_for_tickets",
             f"Discord guild '{discord_guild_id}' is not linked to a GuildDesk organization",
+        )
+
+
+class ClosedTicketMessageError(BusinessRuleViolationError):
+    def __init__(self) -> None:
+        super().__init__(
+            "closed_ticket_message",
+            "Messages cannot be added to a closed ticket",
+        )
+
+
+class DiscordMessageConflictError(BusinessRuleViolationError):
+    def __init__(self, discord_message_id: str) -> None:
+        super().__init__(
+            "discord_message_conflict",
+            f"Discord message '{discord_message_id}' is already attached to another ticket",
         )

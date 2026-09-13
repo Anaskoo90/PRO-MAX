@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from discord_bot.services.api_client import ApiClient
 
@@ -160,3 +159,42 @@ async def test_ticket_methods_handle_transport_failure() -> None:
 
     assert result.ok is False
     assert result.error_message == "Could not reach the GuildDesk API"
+
+
+async def test_add_ticket_message_by_channel_sends_idempotency_fields() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/discord/tickets/by-channel/222/messages"
+        payload = __import__("json").loads(request.content)
+        assert payload == {
+            "body": "Hello",
+            "author_discord_user_id": "333",
+            "discord_message_id": "444",
+        }
+        return httpx.Response(201, json={"data": {"id": "message"}})
+
+    result = await _client(handler).add_ticket_message_by_channel(
+        discord_channel_id="222",
+        body="Hello",
+        author_discord_user_id="333",
+        discord_message_id="444",
+    )
+
+    assert result.ok is True
+
+
+async def test_non_ticket_channel_is_identified_without_raising() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={"code": "not_found", "message": "Ticket was not found"},
+        )
+
+    result = await _client(handler).add_ticket_message_by_channel(
+        discord_channel_id="ordinary-channel",
+        body="Hello",
+        author_discord_user_id="333",
+        discord_message_id="444",
+    )
+
+    assert result.ok is False
+    assert result.not_a_ticket_channel is True

@@ -30,6 +30,7 @@ from app.platform_core.di.container import ServiceContainer
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
+from app.ticket_system.application.ticket_messages import TicketMessageService
 from app.ticket_system.domain.audit import TicketAuditEventCategory
 from app.ticket_system.infrastructure.discord_integration_adapter import (
     DiscordIntegrationGuildResolverAdapter,
@@ -79,10 +80,16 @@ class TicketSystemModule:
             uow_factory=uow_factory, dispatcher=self.dispatcher, permission_checker=permission_checker,
             guild_resolver=guild_resolver,
         )
+        self.ticket_message_service = TicketMessageService(
+            uow_factory=uow_factory,
+            permission_checker=permission_checker,
+            guild_resolver=guild_resolver,
+        )
 
     def register(self, container: ServiceContainer) -> None:
         container.register_instance(TicketLifecycleService, self.ticket_lifecycle_service)
         container.register_instance(TicketCategoryService, self.ticket_category_service)
+        container.register_instance(TicketMessageService, self.ticket_message_service)
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(tickets_router.router)
@@ -91,6 +98,7 @@ class TicketSystemModule:
 
         app.dependency_overrides[deps.get_ticket_lifecycle_service] = lambda: self.ticket_lifecycle_service
         app.dependency_overrides[deps.get_ticket_category_service] = lambda: self.ticket_category_service
+        app.dependency_overrides[deps.get_ticket_message_service] = lambda: self.ticket_message_service
 
 
 __all__ = ["TicketSystemModule", "TICKET_PERMISSION_CATALOG"]

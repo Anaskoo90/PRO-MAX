@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
-from app.ticket_system.domain.entities import Ticket, TicketCategory
 from app.platform_core.api.sorting import SortField
 from app.platform_core.shared_kernel.types import EntityId, OrgId
+from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
+from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
 
 
 class TicketRepository(Protocol):
@@ -42,6 +42,25 @@ class TicketCategoryRepository(Protocol):
     async def list_for_guild(self, discord_guild_id: str, *, active_only: bool = True) -> list[TicketCategory]: ...
     async def add(self, category: TicketCategory) -> None: ...
     async def update(self, category: TicketCategory) -> None: ...
+
+
+class TicketMessageRepository(Protocol):
+    async def get_by_discord_message_id(
+        self, discord_message_id: str
+    ) -> TicketMessage | None: ...
+    async def list_for_ticket(
+        self,
+        *,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        include_internal: bool,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[TicketMessage], int]: ...
+    async def add(self, message: TicketMessage) -> None: ...
+    async def add_idempotent(
+        self, message: TicketMessage
+    ) -> tuple[TicketMessage, bool]: ...
 
 
 class TicketAuditLogRepository(Protocol):

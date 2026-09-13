@@ -5,9 +5,15 @@ the internal DTO shape."""
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+TicketMessageBody = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=10_000),
+]
 
 
 class CreateTicketRequest(BaseModel):
@@ -34,6 +40,18 @@ class TransferTicketRequest(BaseModel):
     new_claimant_discord_user_id: str = Field(min_length=1, max_length=64)
 
 
+class CreateTicketMessageRequest(BaseModel):
+    body: TicketMessageBody
+    is_internal: bool = False
+
+
+class CreateTicketMessageViaBotRequest(BaseModel):
+    body: TicketMessageBody
+    author_discord_user_id: str = Field(min_length=1, max_length=64)
+    discord_message_id: str = Field(min_length=1, max_length=64)
+    is_internal: bool = False
+
+
 class TicketResponse(BaseModel):
     id: UUID
     org_id: UUID
@@ -49,6 +67,18 @@ class TicketResponse(BaseModel):
     closed_at: datetime | None
     closed_by_discord_user_id: str | None
     closed_by_user_id: UUID | None
+    created_at: datetime
+
+
+class TicketMessageResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    ticket_id: UUID
+    body: str
+    author_discord_user_id: str | None
+    author_user_id: UUID | None
+    discord_message_id: str | None
+    is_internal: bool
     created_at: datetime
 
 

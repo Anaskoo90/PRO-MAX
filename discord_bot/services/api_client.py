@@ -36,6 +36,13 @@ class TicketResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TicketMessageResult:
+    ok: bool
+    not_a_ticket_channel: bool = False
+    error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TicketCategoryData:
     id: str
     name: str
@@ -318,6 +325,36 @@ class ApiClient:
         if response.status_code >= 400:
             return TicketResult(ok=False, error_message=self._error_message(response))
         return TicketResult(ok=True, ticket=self._ticket_from_data(response.json()["data"]))
+
+    async def add_ticket_message_by_channel(
+        self,
+        *,
+        discord_channel_id: str,
+        body: str,
+        author_discord_user_id: str,
+        discord_message_id: str,
+    ) -> TicketMessageResult:
+        try:
+            response = await self._http.post(
+                f"/api/v1/discord/tickets/by-channel/{discord_channel_id}/messages",
+                json={
+                    "body": body,
+                    "author_discord_user_id": author_discord_user_id,
+                    "discord_message_id": discord_message_id,
+                },
+                headers=self._bot_headers,
+            )
+        except httpx.HTTPError:
+            return TicketMessageResult(
+                ok=False, error_message="Could not reach the GuildDesk API"
+            )
+        if response.status_code >= 400:
+            return TicketMessageResult(
+                ok=False,
+                not_a_ticket_channel=response.status_code == 404,
+                error_message=self._error_message(response),
+            )
+        return TicketMessageResult(ok=True)
 
     async def aclose(self) -> None:
         await self._http.aclose()

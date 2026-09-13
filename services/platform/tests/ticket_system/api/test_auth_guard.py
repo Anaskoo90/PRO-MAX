@@ -7,6 +7,8 @@ identity_module.seed()) is never triggered.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.dtos import PagedResult
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -47,6 +49,20 @@ class _CategoryServiceSpy:
     async def list_for_guild(self, **kwargs):
         self.calls.append(kwargs)
         return []
+
+
+class _MessageServiceSpy:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def list_messages(self, **kwargs):
+        self.calls.append(kwargs)
+        return PagedResult(
+            items=[],
+            total=0,
+            page=kwargs["page"],
+            page_size=kwargs["page_size"],
+        )
 
 
 def test_create_ticket_without_authorization_header_is_rejected() -> None:
@@ -119,6 +135,52 @@ def test_ticket_and_category_lists_allow_same_tenant_calls() -> None:
 def test_get_ticket_without_authorization_header_is_rejected() -> None:
     response = client.get(f"/api/v1/organizations/{_ORG_ID}/tickets/{_TICKET_ID}")
     assert response.status_code == 401
+
+
+def test_ticket_messages_without_authorization_header_are_rejected() -> None:
+    list_response = client.get(
+        f"/api/v1/organizations/{_ORG_ID}/tickets/{_TICKET_ID}/messages"
+    )
+    create_response = client.post(
+        f"/api/v1/organizations/{_ORG_ID}/tickets/{_TICKET_ID}/messages",
+        json={"body": "Help"},
+    )
+
+    assert (list_response.status_code, create_response.status_code) == (401, 401)
+
+
+def test_ticket_message_body_cannot_be_only_whitespace() -> None:
+    response = client.post(
+        f"/api/v1/organizations/{_ORG_ID}/tickets/{_TICKET_ID}/messages",
+        json={"body": "   "},
+        headers=_headers(UUID(_ORG_ID)),
+    )
+
+    assert response.status_code == 422
+
+
+def test_ticket_message_list_enforces_path_tenant_before_calling_service() -> None:
+    caller_org_id = new_uuid7()
+    other_org_id = new_uuid7()
+    service = _MessageServiceSpy()
+    app.dependency_overrides[deps.get_ticket_message_service] = lambda: service
+
+    try:
+        denied = client.get(
+            f"/api/v1/organizations/{other_org_id}/tickets/{_TICKET_ID}/messages",
+            headers=_headers(caller_org_id),
+        )
+        allowed = client.get(
+            f"/api/v1/organizations/{caller_org_id}/tickets/{_TICKET_ID}/messages",
+            headers=_headers(caller_org_id),
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_ticket_message_service, None)
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert len(service.calls) == 1
+    assert service.calls[0]["org_id"] == caller_org_id
 
 
 def test_close_ticket_without_authorization_header_is_rejected() -> None:
@@ -225,6 +287,32 @@ def test_close_ticket_via_bot_without_bot_secret_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_ticket_message_bot_routes_without_bot_secret_are_rejected() -> None:
+    list_response = client.get(f"/api/v1/discord/tickets/{_TICKET_ID}/messages")
+    create_response = client.post(
+        f"/api/v1/discord/tickets/{_TICKET_ID}/messages",
+        json={
+            "body": "Discord message",
+            "author_discord_user_id": "1",
+            "discord_message_id": "2",
+        },
+    )
+    channel_create_response = client.post(
+        "/api/v1/discord/tickets/by-channel/2/messages",
+        json={
+            "body": "Discord message",
+            "author_discord_user_id": "1",
+            "discord_message_id": "2",
+        },
+    )
+
+    assert (
+        list_response.status_code,
+        create_response.status_code,
+        channel_create_response.status_code,
+    ) == (401, 401, 401)
+
+
 def test_list_ticket_categories_via_bot_without_bot_secret_is_rejected() -> None:
     response = client.get("/api/v1/discord/guilds/123/ticket-categories")
     assert response.status_code == 401
@@ -253,7 +341,10 @@ def test_openapi_schema_includes_ticket_system_routes() -> None:
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/claim" in paths
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/unclaim" in paths
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/transfer" in paths
+    assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/messages" in paths
     assert "/api/v1/organizations/{org_id}/ticket-categories" in paths
     assert "/api/v1/discord/tickets" in paths
     assert "/api/v1/discord/tickets/by-channel/{discord_channel_id}" in paths
+    assert "/api/v1/discord/tickets/{ticket_id}/messages" in paths
+    assert "/api/v1/discord/tickets/by-channel/{discord_channel_id}/messages" in paths
     assert "/api/v1/discord/guilds/{discord_guild_id}/ticket-categories" in paths
