@@ -31,10 +31,16 @@ _DOMAIN_STATUS_MAP: dict[type[GuildDeskError], int] = {
     ConcurrencyConflictError: status.HTTP_409_CONFLICT,
 }
 
+_DOMAIN_CODE_STATUS_MAP: dict[ErrorCode, int] = {
+    ErrorCode.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+}
+
 
 def _map_status_code(exc: GuildDeskError) -> int:
     if isinstance(exc, ApiError):
         return exc.http_status
+    if exc.code in _DOMAIN_CODE_STATUS_MAP:
+        return _DOMAIN_CODE_STATUS_MAP[exc.code]
     for exc_type, http_status in _DOMAIN_STATUS_MAP.items():
         if isinstance(exc, exc_type):
             return http_status

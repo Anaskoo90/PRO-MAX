@@ -4,15 +4,14 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
 from app.boards.infrastructure.orm_models import BoardsBase
 from app.identity.infrastructure.orm_models import IdentityBase
 from app.platform_core.configuration.settings import get_settings
 from app.projects.infrastructure.orm_models import ProjectsBase
 from app.tasks.infrastructure.orm_models import TasksBase
 from app.workflow_engine.infrastructure.orm_models import WorkflowEngineBase
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 
@@ -23,7 +22,15 @@ if config.config_file_name is not None:
 # implemented (app.crm.infrastructure.orm_models.CrmBase, ...) — Identity,
 # Projects & Workspaces, Tasks & Work Management, Boards & Agile
 # Management, and Workflow Engine so far.
-target_metadata = [IdentityBase.metadata, ProjectsBase.metadata, TasksBase.metadata, BoardsBase.metadata, WorkflowEngineBase.metadata]
+target_metadata = [
+    IdentityBase.metadata,
+    ProjectsBase.metadata,
+    TasksBase.metadata,
+    BoardsBase.metadata,
+    WorkflowEngineBase.metadata,
+]
+
+_VERSION_TABLE_SCHEMA = "identity"
 
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", str(settings.database_url))
@@ -36,10 +43,14 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        version_table_schema="identity",
+        version_table_schema=_VERSION_TABLE_SCHEMA,
         include_schemas=True,
     )
     with context.begin_transaction():
+        # Alembic creates its version table before applying revision 0001.  A
+        # brand-new database therefore needs the version-table schema before
+        # 0001 gets a chance to create it itself.
+        context.execute(f"CREATE SCHEMA IF NOT EXISTS {_VERSION_TABLE_SCHEMA}")
         context.run_migrations()
 
 
@@ -47,10 +58,11 @@ def _do_run_migrations(connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        version_table_schema="identity",
+        version_table_schema=_VERSION_TABLE_SCHEMA,
         include_schemas=True,
     )
     with context.begin_transaction():
+        context.execute(f"CREATE SCHEMA IF NOT EXISTS {_VERSION_TABLE_SCHEMA}")
         context.run_migrations()
 
 

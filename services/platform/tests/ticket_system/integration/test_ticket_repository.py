@@ -11,11 +11,11 @@ pytestmark = pytest.mark.asyncio
 
 
 def _guild_id() -> str:
-    return f"guild-{new_uuid7().hex[:8]}"
+    return f"guild-{new_uuid7().hex}"
 
 
 def _channel_id() -> str:
-    return f"channel-{new_uuid7().hex[:8]}"
+    return f"channel-{new_uuid7().hex}"
 
 
 async def test_add_then_get_by_id_round_trips(uow) -> None:
