@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.dtos import WorkflowDTO
@@ -49,6 +50,7 @@ class WorkflowService:
                     actor_user_id=actor_user_id, resource_type="workflow", resource_id=str(workflow.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workflow.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)
@@ -100,6 +102,7 @@ class WorkflowService:
             workflow.update(name=name, description=description)
             await uow.workflows.update(workflow)
             events = workflow.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workflow.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)
@@ -116,6 +119,7 @@ class WorkflowService:
                     actor_user_id=actor_user_id, resource_type="workflow", resource_id=str(workflow.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workflow.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)
@@ -126,6 +130,7 @@ class WorkflowService:
             workflow.restore()
             await uow.workflows.update(workflow)
             events = workflow.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workflow.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)
@@ -144,5 +149,6 @@ class WorkflowService:
                     actor_user_id=actor_user_id, resource_type="workflow", resource_id=str(workflow.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workflow.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

@@ -22,7 +22,10 @@ async def test_run_due_actions_executes_a_due_action_and_marks_it_executed() -> 
     from app.workflow_engine.domain.entities import WorkflowDefinition
     from app.platform_core.shared_kernel.types import EntityId, OrgId
 
-    workflow = WorkflowDefinition.create(project_id=EntityId(new_uuid7()), org_id=OrgId(new_uuid7()), name="Demo")
+    workflow_org_id = OrgId(new_uuid7())
+    workflow = WorkflowDefinition.create(
+        project_id=EntityId(new_uuid7()), org_id=workflow_org_id, name="Demo"
+    )
     await uow.workflows.add(workflow)
     transition_id = EntityId(new_uuid7())
     action = WorkflowAction.create(transition_id=transition_id, action_type=ActionType.CREATE_COMMENT, config={"body": "Later"}, position=1.0)
@@ -41,6 +44,10 @@ async def test_run_due_actions_executes_a_due_action_and_marks_it_executed() -> 
     entries = await uow.activity_entries.list_for_task(workflow.id, task_id)
     assert len(entries) == 1
     assert entries[0].body == "Later"
+    assert [event.payload["event_type"] for event in uow.outbox.events] == [
+        "workflow_engine.action_executed"
+    ]
+    assert {event.org_id for event in uow.outbox.events} == {workflow_org_id}
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,10 @@ async def test_create_workflow_succeeds_for_a_project_member(context) -> None:
 
     assert workflow.name == "Bug Triage"
     assert workflow.status == "active"
+    assert [event.payload["event_type"] for event in uow.outbox.events] == [
+        "workflow_engine.workflow_created"
+    ]
+    assert {event.org_id for event in uow.outbox.events} == {org_id}
 
 
 @pytest.mark.asyncio

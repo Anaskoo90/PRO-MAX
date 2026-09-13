@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.dtos import WorkflowStateDTO
 from app.workflow_engine.application.ports import OrgPermissionCheckerPort, ProjectContextPort
-from app.workflow_engine.domain.entities import WorkflowState, compute_position_between
+from app.workflow_engine.domain.entities import WorkflowDefinition, WorkflowState, compute_position_between
 from app.workflow_engine.domain.events import StateCreated, StateDeleted, StateUpdated
 from app.workflow_engine.domain.exceptions import (
     ProjectNotAccessibleError,
@@ -54,7 +55,9 @@ class WorkflowStateService:
         is_final: bool = False, is_hidden: bool = False, mapped_task_status: str | None = None,
     ) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            await self._assert_can_manage_workflow(uow, workflow_id=workflow_id, actor_user_id=actor_user_id)
+            workflow = await self._assert_can_manage_workflow(
+                uow, workflow_id=workflow_id, actor_user_id=actor_user_id
+            )
             if await uow.states.get_by_name(workflow_id, name) is not None:
                 raise StateNameAlreadyExistsError(name)
 
@@ -68,8 +71,10 @@ class WorkflowStateService:
                 is_hidden=is_hidden, mapped_task_status=mapped_task_status,
             )
             await uow.states.add(state)
+            event = StateCreated(aggregate_id=state.id, workflow_id=workflow_id, name=name)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateCreated(aggregate_id=state.id, workflow_id=workflow_id, name=name))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def list_for_workflow(
@@ -87,75 +92,91 @@ class WorkflowStateService:
             states = await uow.states.list_for_workflow(workflow_id)
             return [_to_dto(s) for s in states]
 
-    async def _load_state_and_authorize(self, uow, *, state_id: EntityId, actor_user_id: UserId) -> WorkflowState:
+    async def _load_state_and_authorize(
+        self, uow, *, state_id: EntityId, actor_user_id: UserId
+    ) -> tuple[WorkflowState, WorkflowDefinition]:
         state = await uow.states.get_by_id(state_id)
         if state is None:
             raise StateNotFoundError(state_id)
-        await self._assert_can_manage_workflow(uow, workflow_id=state.workflow_id, actor_user_id=actor_user_id)
-        return state
+        workflow = await self._assert_can_manage_workflow(
+            uow, workflow_id=state.workflow_id, actor_user_id=actor_user_id
+        )
+        return state, workflow
 
     async def rename_state(self, *, state_id: EntityId, actor_user_id: UserId, name: str) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             if await uow.states.get_by_name(state.workflow_id, name) is not None:
                 raise StateNameAlreadyExistsError(name)
             state.rename(name)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def set_initial(self, *, state_id: EntityId, actor_user_id: UserId) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             await self._clear_existing_initial(uow, state.workflow_id)
             state.set_initial(True)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def set_final(self, *, state_id: EntityId, actor_user_id: UserId, is_final: bool) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             state.set_final(is_final)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def set_hidden(self, *, state_id: EntityId, actor_user_id: UserId, is_hidden: bool) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             state.set_hidden(is_hidden)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def set_archived(self, *, state_id: EntityId, actor_user_id: UserId, is_archived: bool) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             state.set_archived(is_archived)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def set_mapped_task_status(self, *, state_id: EntityId, actor_user_id: UserId, status: str | None) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             state.set_mapped_task_status(status)
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateUpdated(aggregate_id=state.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def reorder_state(
         self, *, state_id: EntityId, actor_user_id: UserId, previous_state_id: EntityId | None, next_state_id: EntityId | None,
     ) -> WorkflowStateDTO:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            state, workflow = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
 
             previous_position = None
             if previous_state_id is not None:
@@ -172,14 +193,21 @@ class WorkflowStateService:
 
             state.set_position(compute_position_between(previous_position, next_position))
             await uow.states.update(state)
+            event = StateUpdated(aggregate_id=state.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
+            await self._dispatcher.dispatch(event)
             return _to_dto(state)
 
     async def delete_state(self, *, state_id: EntityId, actor_user_id: UserId) -> None:
         async with self._uow_factory() as uow:
-            await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            _state, workflow = await self._load_state_and_authorize(
+                uow, state_id=state_id, actor_user_id=actor_user_id
+            )
             if await uow.transitions.references_state(state_id):
                 raise StateInUseError(state_id)
             await uow.states.delete(state_id)
+            event = StateDeleted(aggregate_id=state_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(StateDeleted(aggregate_id=state_id))
+            await self._dispatcher.dispatch(event)

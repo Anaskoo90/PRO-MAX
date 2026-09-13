@@ -99,6 +99,12 @@ async def test_enroll_task_starts_at_initial_state(context) -> None:
     task_state = await context["execution_service"].enroll_task(workflow_id=workflow.id, task_id=context["task_id"], actor_user_id=context["actor_id"])
 
     assert task_state.current_state_id == todo.id
+    assert "workflow_engine.task_enrolled" in {
+        event.payload["event_type"] for event in context["uow"].outbox.events
+    }
+    assert {event.org_id for event in context["uow"].outbox.events} == {
+        context["org_id"]
+    }
 
 
 @pytest.mark.asyncio
@@ -140,6 +146,9 @@ async def test_execute_transition_moves_state_and_syncs_mapped_task_status(conte
     assert history[0].from_state_id == todo.id
     assert history[0].to_state_id == done.id
     assert history[0].reason == "ready"
+    assert "workflow_engine.transition_executed" in {
+        event.payload["event_type"] for event in context["uow"].outbox.events
+    }
 
 
 @pytest.mark.asyncio

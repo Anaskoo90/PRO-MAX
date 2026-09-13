@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.dtos import (
@@ -134,7 +135,9 @@ class WorkflowTransitionService:
         is_automatic: bool = False,
     ) -> WorkflowTransitionDTO:
         async with self._uow_factory() as uow:
-            await self._assert_can_manage_workflow(uow, workflow_id=workflow_id, actor_user_id=actor_user_id)
+            workflow = await self._assert_can_manage_workflow(
+                uow, workflow_id=workflow_id, actor_user_id=actor_user_id
+            )
             from_state = await uow.states.get_by_id(from_state_id)
             if from_state is None or from_state.workflow_id != workflow_id:
                 raise StateNotFoundError(from_state_id)
@@ -149,8 +152,10 @@ class WorkflowTransitionService:
                 position=position, is_automatic=is_automatic,
             )
             await uow.transitions.add(transition)
+            event = TransitionCreated(aggregate_id=transition.id, workflow_id=workflow_id, name=name)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TransitionCreated(aggregate_id=transition.id, workflow_id=workflow_id, name=name))
+            await self._dispatcher.dispatch(event)
             return _transition_to_dto(transition)
 
     async def list_for_workflow(
@@ -166,28 +171,37 @@ class WorkflowTransitionService:
     async def rename_transition(self, *, transition_id: EntityId, actor_user_id: UserId, name: str) -> WorkflowTransitionDTO:
         async with self._uow_factory() as uow:
             transition = await self._load_transition_and_authorize(uow, transition_id=transition_id, actor_user_id=actor_user_id)
+            workflow = await uow.workflows.get_by_id(transition.workflow_id)
             transition.rename(name)
             await uow.transitions.update(transition)
+            event = TransitionRenamed(aggregate_id=transition.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TransitionRenamed(aggregate_id=transition.id))
+            await self._dispatcher.dispatch(event)
             return _transition_to_dto(transition)
 
     async def enable_transition(self, *, transition_id: EntityId, actor_user_id: UserId) -> WorkflowTransitionDTO:
         async with self._uow_factory() as uow:
             transition = await self._load_transition_and_authorize(uow, transition_id=transition_id, actor_user_id=actor_user_id)
+            workflow = await uow.workflows.get_by_id(transition.workflow_id)
             transition.enable()
             await uow.transitions.update(transition)
+            event = TransitionEnabled(aggregate_id=transition.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TransitionEnabled(aggregate_id=transition.id))
+            await self._dispatcher.dispatch(event)
             return _transition_to_dto(transition)
 
     async def disable_transition(self, *, transition_id: EntityId, actor_user_id: UserId) -> WorkflowTransitionDTO:
         async with self._uow_factory() as uow:
             transition = await self._load_transition_and_authorize(uow, transition_id=transition_id, actor_user_id=actor_user_id)
+            workflow = await uow.workflows.get_by_id(transition.workflow_id)
             transition.disable()
             await uow.transitions.update(transition)
+            event = TransitionDisabled(aggregate_id=transition.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TransitionDisabled(aggregate_id=transition.id))
+            await self._dispatcher.dispatch(event)
             return _transition_to_dto(transition)
 
     async def set_automatic(self, *, transition_id: EntityId, actor_user_id: UserId, is_automatic: bool) -> WorkflowTransitionDTO:
@@ -200,7 +214,10 @@ class WorkflowTransitionService:
 
     async def delete_transition(self, *, transition_id: EntityId, actor_user_id: UserId) -> None:
         async with self._uow_factory() as uow:
-            await self._load_transition_and_authorize(uow, transition_id=transition_id, actor_user_id=actor_user_id)
+            transition = await self._load_transition_and_authorize(
+                uow, transition_id=transition_id, actor_user_id=actor_user_id
+            )
+            workflow = await uow.workflows.get_by_id(transition.workflow_id)
 
             for rule in await uow.rules.list_for_transition(transition_id):
                 await uow.rules.delete(rule.id)
@@ -212,8 +229,10 @@ class WorkflowTransitionService:
                 await uow.checklist_items.delete(item.id)
 
             await uow.transitions.delete(transition_id)
+            event = TransitionDeleted(aggregate_id=transition_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TransitionDeleted(aggregate_id=transition_id))
+            await self._dispatcher.dispatch(event)
 
     # --- Transition Rules (submodule 4) ---
 

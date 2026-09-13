@@ -12,6 +12,7 @@ delayed "send notification" behaves identically to an immediate one.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.shared_kernel.utils import utcnow
 from app.workflow_engine.application.action_execution import ActionExecutor
@@ -51,15 +52,35 @@ class WorkflowAutomationService:
                     )
                     pending.mark_executed()
                     await uow.pending_actions.update(pending)
+                    event = ActionExecuted(
+                        aggregate_id=action.id,
+                        workflow_id=pending.workflow_id,
+                        task_id=pending.task_id,
+                        action_id=action.id,
+                        action_type=action.action_type.value,
+                    )
+                    await append_domain_events_to_outbox(
+                        uow.outbox, [event], org_id=workflow.org_id
+                    )
                     await uow.commit()
-                    await self._dispatcher.dispatch(ActionExecuted(aggregate_id=action.id, workflow_id=pending.workflow_id, task_id=pending.task_id, action_id=action.id, action_type=action.action_type.value))
+                    await self._dispatcher.dispatch(event)
                 except Exception as exc:  # noqa: BLE001 — one bad action must not stop the batch
                     await uow.rollback()
+                    event = ActionExecutionFailed(
+                        aggregate_id=action.id,
+                        workflow_id=pending.workflow_id,
+                        task_id=pending.task_id,
+                        action_id=action.id,
+                        reason=str(exc),
+                    )
                     async with self._uow_factory() as failure_uow:
                         pending.mark_failed(str(exc))
                         await failure_uow.pending_actions.update(pending)
+                        await append_domain_events_to_outbox(
+                            failure_uow.outbox, [event], org_id=workflow.org_id
+                        )
                         await failure_uow.commit()
-                    await self._dispatcher.dispatch(ActionExecutionFailed(aggregate_id=action.id, workflow_id=pending.workflow_id, task_id=pending.task_id, action_id=action.id, reason=str(exc)))
+                    await self._dispatcher.dispatch(event)
                     await _logger.awarning("workflow_pending_action_failed", pending_action_id=str(pending.id), reason=str(exc))
                 processed += 1
         return processed

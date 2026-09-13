@@ -14,6 +14,7 @@ rule checks before a transition is allowed to fire.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import utcnow
 from app.workflow_engine.application.action_execution import ActionExecutor
@@ -170,8 +171,15 @@ class WorkflowExecutionService:
 
             task_state = WorkflowTaskState.create(workflow_id=workflow_id, task_id=task_id, initial_state_id=initial_state.id)
             await uow.task_states.add(task_state)
+            event = TaskEnrolledInWorkflow(
+                aggregate_id=task_state.id,
+                workflow_id=workflow_id,
+                task_id=task_id,
+                state_id=initial_state.id,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TaskEnrolledInWorkflow(aggregate_id=task_state.id, workflow_id=workflow_id, task_id=task_id, state_id=initial_state.id))
+            await self._dispatcher.dispatch(event)
             return _task_state_to_dto(task_state)
 
     async def get_task_state(
@@ -251,7 +259,7 @@ class WorkflowExecutionService:
                 raise ConditionsNotMetError()
 
         dto = await self._apply_transition(
-            workflow_id=workflow_id, org_id=task_summary.org_id, task_id=task_id, transition=transition,
+            workflow_id=workflow_id, org_id=workflow.org_id, task_id=task_id, transition=transition,
             actor_user_id=actor_user_id, reason=reason,
         )
         await self._auto_advance(workflow_id=workflow_id, task_id=task_id, actor_user_id=actor_user_id)
@@ -297,11 +305,22 @@ class WorkflowExecutionService:
                 await uow.pending_actions.add(pending)
                 scheduled_events.append(ActionScheduled(aggregate_id=pending.id, workflow_id=workflow_id, task_id=task_id, action_id=action.id, run_at=run_at))
 
+            transition_event = TransitionExecuted(
+                aggregate_id=transition.id,
+                workflow_id=workflow_id,
+                task_id=task_id,
+                transition_id=transition.id,
+                from_state_id=from_state_id,
+                to_state_id=to_state_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [transition_event, *scheduled_events],
+                org_id=org_id,
+            )
             await uow.commit()
 
-        await self._dispatcher.dispatch(
-            TransitionExecuted(aggregate_id=transition.id, workflow_id=workflow_id, task_id=task_id, transition_id=transition.id, from_state_id=from_state_id, to_state_id=to_state_id)
-        )
+        await self._dispatcher.dispatch(transition_event)
         await self._dispatcher.dispatch_all(scheduled_events)
 
         # Status sync + immediate action execution happen after the
@@ -318,10 +337,28 @@ class WorkflowExecutionService:
             try:
                 async with self._uow_factory() as action_uow:
                     await self._action_executor.execute(action_uow, action, workflow_id=workflow_id, task_id=task_id, org_id=org_id, actor_user_id=actor_user_id)
+                    event = ActionExecuted(
+                        aggregate_id=action.id,
+                        workflow_id=workflow_id,
+                        task_id=task_id,
+                        action_id=action.id,
+                        action_type=action.action_type.value,
+                    )
+                    await append_domain_events_to_outbox(action_uow.outbox, [event], org_id=org_id)
                     await action_uow.commit()
-                await self._dispatcher.dispatch(ActionExecuted(aggregate_id=action.id, workflow_id=workflow_id, task_id=task_id, action_id=action.id, action_type=action.action_type.value))
+                await self._dispatcher.dispatch(event)
             except Exception as exc:  # noqa: BLE001 — a failed side-effect must not fail the already-committed transition
-                await self._dispatcher.dispatch(ActionExecutionFailed(aggregate_id=action.id, workflow_id=workflow_id, task_id=task_id, action_id=action.id, reason=str(exc)))
+                event = ActionExecutionFailed(
+                    aggregate_id=action.id,
+                    workflow_id=workflow_id,
+                    task_id=task_id,
+                    action_id=action.id,
+                    reason=str(exc),
+                )
+                async with self._uow_factory() as failure_uow:
+                    await append_domain_events_to_outbox(failure_uow.outbox, [event], org_id=org_id)
+                    await failure_uow.commit()
+                await self._dispatcher.dispatch(event)
 
         return _task_state_to_dto(task_state)
 
@@ -370,8 +407,14 @@ class WorkflowExecutionService:
             await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
             approval = WorkflowApprovalRequest.create(transition_id=transition_id, task_id=task_id, requested_by=actor_user_id)
             await uow.approvals.add(approval)
+            event = ApprovalRequested(
+                aggregate_id=approval.id,
+                transition_id=transition_id,
+                task_id=task_id,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ApprovalRequested(aggregate_id=approval.id, transition_id=transition_id, task_id=task_id))
+            await self._dispatcher.dispatch(event)
             return _approval_to_dto(approval)
 
     async def decide_approval(self, *, approval_id: EntityId, actor_user_id: UserId, approved: bool, reason: str = "") -> WorkflowApprovalRequestDTO:
@@ -392,8 +435,15 @@ class WorkflowExecutionService:
             else:
                 approval.reject(decided_by=actor_user_id, reason=reason)
             await uow.approvals.update(approval)
+            event = ApprovalDecided(
+                aggregate_id=approval.id,
+                transition_id=approval.transition_id,
+                task_id=approval.task_id,
+                decision=approval.status.value,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ApprovalDecided(aggregate_id=approval.id, transition_id=approval.transition_id, task_id=approval.task_id, decision=approval.status.value))
+            await self._dispatcher.dispatch(event)
             return _approval_to_dto(approval)
 
     # --- Required Checklist Completion (transition rule) ---
@@ -413,5 +463,12 @@ class WorkflowExecutionService:
                 return
             completion = WorkflowChecklistCompletion.create(checklist_item_id=item_id, task_id=task_id, completed_by=actor_user_id)
             await uow.checklist_completions.add(completion)
+            event = ChecklistItemCompleted(
+                aggregate_id=completion.id,
+                transition_id=item.transition_id,
+                task_id=task_id,
+                checklist_item_id=item_id,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=workflow.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ChecklistItemCompleted(aggregate_id=completion.id, transition_id=item.transition_id, task_id=task_id, checklist_item_id=item_id))
+            await self._dispatcher.dispatch(event)
