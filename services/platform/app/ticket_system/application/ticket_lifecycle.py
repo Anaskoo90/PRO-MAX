@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from app.platform_core.api.sorting import SortField
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.dtos import PagedResult
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.ticket_system.application.authorization_helpers import TicketAuthorization
@@ -214,6 +215,7 @@ class TicketLifecycleService:
                     },
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=ticket.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(ticket)
@@ -238,6 +240,7 @@ class TicketLifecycleService:
                     metadata={"claimed_by_discord_user_id": claimant.discord_user_id},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=ticket.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(ticket)
@@ -261,6 +264,7 @@ class TicketLifecycleService:
                     actor_user_id=actor_user_id, resource_type="ticket", resource_id=str(ticket.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=ticket.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(ticket)
@@ -285,6 +289,7 @@ class TicketLifecycleService:
                     resource_id=str(ticket.id), metadata={"claimed_by_discord_user_id": new_claimant.discord_user_id},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=ticket.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(ticket)
@@ -313,6 +318,7 @@ class TicketLifecycleService:
                     metadata={"closed_by_discord_user_id": actor.discord_user_id},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=ticket.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(ticket)

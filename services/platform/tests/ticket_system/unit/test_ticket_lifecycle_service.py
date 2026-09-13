@@ -55,6 +55,10 @@ async def test_create_ticket_succeeds_for_a_permitted_user(context) -> None:
     assert ticket.status == "open"
     assert ticket.ticket_number == 1
     assert ticket.opener_discord_user_id == "333"
+    assert [event.payload["event_type"] for event in uow.outbox.events] == [
+        "ticket_system.ticket_opened"
+    ]
+    assert {event.org_id for event in uow.outbox.events} == {org_id}
 
 
 async def test_create_ticket_rejects_a_user_without_permission(context) -> None:
