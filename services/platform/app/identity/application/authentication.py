@@ -16,6 +16,8 @@ import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
+import jwt
+
 from app.identity.application.dtos import AuthTokens, LoginResult, SessionDTO
 from app.identity.application.ports import IdentityUnitOfWorkPort, OAuth2ClientPort
 from app.identity.application.security import SecurityService
@@ -29,14 +31,16 @@ from app.identity.domain.events import (
 from app.identity.domain.exceptions import (
     AccountLockedError,
     InvalidCredentialsError,
+    InvalidTokenError,
+    OAuthProviderNotConfiguredError,
     OrganizationNotFoundError,
     SessionNotFoundError,
     UserNotFoundError,
 )
 from app.identity.domain.specifications import AccountLockoutSpecification
-from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
+from app.platform_core.messaging.idempotency import IdempotencyStore
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.types import EntityId, OrgId
@@ -151,6 +155,41 @@ class AuthenticationService:
             if org is None:
                 raise OrganizationNotFoundError(org_slug)
             return OrgId(org.id)
+
+    async def login_external(
+        self,
+        *,
+        user_id: EntityId,
+        ip_address: str,
+        device_info: dict | None,
+    ) -> LoginResult:
+        """Complete login for an identity already verified by an external provider.
+
+        Local MFA remains mandatory when enrolled; OAuth replaces the password
+        factor, not the platform's second-factor policy.
+        """
+        async with self._uow_factory() as uow:
+            user = await uow.users.get_by_id(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            user.assert_can_authenticate()
+            if user.mfa_enabled:
+                return LoginResult(
+                    mfa_challenge_token=self._token_service.issue_mfa_challenge_token(
+                        user_id=user.id,
+                        org_id=user.org_id,
+                        ttl=self._policy.mfa_challenge_ttl,
+                    ),
+                    mfa_available_factors=("totp", "recovery_code"),
+                )
+
+        tokens = await self.complete_mfa_challenge(
+            user_id=user_id,
+            ip_address=ip_address,
+            device_info=device_info,
+            remember_me=False,
+        )
+        return LoginResult(tokens=tokens)
 
     async def complete_mfa_challenge(self, *, user_id: EntityId, ip_address: str, device_info: dict | None, remember_me: bool) -> AuthTokens:
         """Called by mfa.py's VerifyMfaChallenge after a successful MFA
@@ -280,37 +319,69 @@ class OAuth2LoginService:
         uow_factory,
         oauth2_clients: dict[str, OAuth2ClientPort],
         authentication_service: AuthenticationService,
+        token_service: JwtTokenService,
+        state_replay_store: IdempotencyStore,
     ) -> None:
         self._uow_factory = uow_factory
         self._oauth2_clients = oauth2_clients
         self._authentication_service = authentication_service
+        self._token_service = token_service
+        self._state_replay_store = state_replay_store
 
-    def build_authorization_url(self, provider_key: str) -> tuple[str, str]:
-        return self._oauth2_clients[provider_key].build_authorization_url()
+    def build_authorization_url(self, *, provider_key: str, org_id: OrgId) -> tuple[str, str]:
+        client = self._client_for(provider_key)
+        state = self._token_service.issue_oauth_state_token(
+            org_id=org_id,
+            provider_key=provider_key,
+        )
+        return client.build_authorization_url(state=state), state
 
     async def login_with_callback(
-        self, *, provider_key: str, code: str, org_id: OrgId, ip_address: str, device_info: dict | None
-    ) -> AuthTokens:
-        client = self._oauth2_clients[provider_key]
+        self,
+        *,
+        provider_key: str,
+        code: str,
+        state: str,
+        ip_address: str,
+        device_info: dict | None,
+    ) -> LoginResult:
+        client = self._client_for(provider_key)
+        try:
+            state_claims = self._token_service.verify_oauth_state_token(state)
+        except (jwt.InvalidTokenError, KeyError, TypeError, ValueError) as exc:
+            raise InvalidTokenError("oauth_state") from exc
+        if state_claims.provider_key != provider_key:
+            raise InvalidTokenError("oauth_state")
+        replay_ttl = max(1, state_claims.expires_at_epoch - int(utcnow().timestamp()))
+        is_first_use = await self._state_replay_store.check_and_mark(
+            f"oauth_state:{state_claims.state_id}",
+            ttl_seconds=replay_ttl,
+        )
+        if not is_first_use:
+            raise InvalidTokenError("oauth_state")
+
         token_response = await client.exchange_code(code)
         identity = await client.fetch_external_identity(token_response)
+        if not identity.email or not identity.email_verified:
+            raise InvalidCredentialsError()
+        normalized_email = identity.email.strip().lower()
 
         async with self._uow_factory() as uow:
-            user = None
-            if identity.email:
-                user = await uow.users.get_by_email(org_id, identity.email)
+            user = await uow.users.get_by_email(state_claims.org_id, normalized_email)
             if user is None:
-                fallback_email = f"{identity.subject}@{provider_key}.oauth.guilddesk.local"
-                user = User.register(
-                    org_id=org_id,
-                    email=Email(identity.email or fallback_email),
-                    password_hash="",  # OAuth-only accounts have no local password
-                    display_name=identity.display_name or identity.subject,
-                )
-                user.verify_email()  # provider already verified the email
-                await uow.users.add(user)
-                await uow.commit()
+                # Organization membership is provisioned only through the
+                # existing registration/invitation flows. OAuth must never be
+                # an invitation bypass merely because an org UUID is known.
+                raise InvalidCredentialsError()
 
-        return await self._authentication_service.complete_mfa_challenge(
-            user_id=user.id, ip_address=ip_address, device_info=device_info, remember_me=False
+        return await self._authentication_service.login_external(
+            user_id=user.id,
+            ip_address=ip_address,
+            device_info=device_info,
         )
+
+    def _client_for(self, provider_key: str) -> OAuth2ClientPort:
+        try:
+            return self._oauth2_clients[provider_key]
+        except KeyError as exc:
+            raise OAuthProviderNotConfiguredError(provider_key) from exc

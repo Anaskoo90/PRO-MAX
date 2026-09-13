@@ -48,6 +48,7 @@ from app.identity.application.security import (
 from app.identity.application.team_management import TeamService
 from app.identity.application.user_management import UserManagementService
 from app.identity.domain.events import SuspiciousLoginDetected, UserRegistered
+from app.identity.infrastructure.oauth2_client import OAuth2Client, OAuth2ProviderConfig
 from app.identity.infrastructure.seed_data import seed_identity
 from app.identity.infrastructure.unit_of_work import IdentityUnitOfWork
 from app.identity.presentation import (
@@ -176,10 +177,30 @@ class IdentityModule:
             security_service=self.security_service,
             policy=AuthPolicy(refresh_token_pepper=token_hash_pepper),
         )
+        oauth2_clients = {}
+        if (
+            settings.oauth_discord_client_id
+            and settings.oauth_discord_client_secret
+            and settings.oauth_discord_redirect_uri
+        ):
+            oauth2_clients["discord"] = OAuth2Client(
+                OAuth2ProviderConfig(
+                    provider_key="discord",
+                    client_id=settings.oauth_discord_client_id,
+                    client_secret=settings.oauth_discord_client_secret.get_secret_value(),
+                    authorization_endpoint="https://discord.com/oauth2/authorize",
+                    token_endpoint="https://discord.com/api/oauth2/token",
+                    userinfo_endpoint="https://discord.com/api/users/@me",
+                    redirect_uri=str(settings.oauth_discord_redirect_uri),
+                    scopes=("identify", "email"),
+                )
+            )
         self.oauth2_login_service = OAuth2LoginService(
             uow_factory=uow_factory,
-            oauth2_clients={},  # provider configs (Discord, etc.) not yet decided
+            oauth2_clients=oauth2_clients,
             authentication_service=self.authentication_service,
+            token_service=self.token_service,
+            state_replay_store=RedisIdempotencyStore(self.redis_client),
         )
         self.user_management_service = UserManagementService(
             uow_factory=uow_factory,

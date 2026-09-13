@@ -84,9 +84,21 @@ class PlatformSettings(BaseSettings):
     smtp_start_tls: bool = False
     smtp_timeout_seconds: float = Field(default=10.0, gt=0)
 
+    oauth_discord_client_id: str | None = None
+    oauth_discord_client_secret: SecretStr | None = None
+    oauth_discord_redirect_uri: AnyHttpUrl | None = None
+
     otel_exporter_endpoint: str | None = None
 
-    @field_validator("smtp_host", "smtp_username", "smtp_password", mode="before")
+    @field_validator(
+        "smtp_host",
+        "smtp_username",
+        "smtp_password",
+        "oauth_discord_client_id",
+        "oauth_discord_client_secret",
+        "oauth_discord_redirect_uri",
+        mode="before",
+    )
     @classmethod
     def _empty_smtp_values_are_unset(cls, value: object) -> object:
         return None if value == "" else value
@@ -111,6 +123,18 @@ class PlatformSettings(BaseSettings):
             raise ValueError("smtp_use_ssl and smtp_start_tls cannot both be enabled")
         if (self.smtp_username is None) != (self.smtp_password is None):
             raise ValueError("smtp_username and smtp_password must be configured together")
+        discord_oauth_values = (
+            self.oauth_discord_client_id,
+            self.oauth_discord_client_secret,
+            self.oauth_discord_redirect_uri,
+        )
+        if any(value is not None for value in discord_oauth_values) and not all(
+            value is not None for value in discord_oauth_values
+        ):
+            raise ValueError(
+                "oauth_discord_client_id, oauth_discord_client_secret, and "
+                "oauth_discord_redirect_uri must be configured together"
+            )
         if self.environment.is_production_like and not self.cors_allowed_origins:
             raise ValueError(
                 "cors_allowed_origins must be explicitly set in staging/production"

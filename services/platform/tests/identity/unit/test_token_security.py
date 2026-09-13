@@ -69,3 +69,16 @@ def test_access_token_cannot_be_used_as_an_mfa_challenge() -> None:
 
     with pytest.raises(jwt.InvalidTokenError):
         service.verify_mfa_challenge_token(token)
+
+
+def test_oauth_state_is_bound_to_org_and_provider_and_not_an_access_token() -> None:
+    service = JwtTokenService(signing_key="a" * 32)
+    org_id = new_uuid7()
+    state = service.issue_oauth_state_token(org_id=org_id, provider_key="discord")
+
+    claims = service.verify_oauth_state_token(state)
+
+    assert claims.org_id == org_id
+    assert claims.provider_key == "discord"
+    with pytest.raises(jwt.InvalidTokenError):
+        service.verify(state)

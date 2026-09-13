@@ -30,7 +30,7 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
 
     @model_validator(mode="after")
-    def _exactly_one_org_identifier(self) -> "LoginRequest":
+    def _exactly_one_org_identifier(self) -> LoginRequest:
         if (self.org_id is None) == (self.org_slug is None):
             raise ValueError("Provide exactly one of org_id or org_slug")
         return self
@@ -135,8 +135,8 @@ class OAuth2AuthorizationUrlResponse(BaseModel):
 
 
 class OAuth2CallbackRequest(BaseModel):
-    org_id: UUID
     code: str
+    state: str
 
 
 # --- Organization ---------------------------------------------------------

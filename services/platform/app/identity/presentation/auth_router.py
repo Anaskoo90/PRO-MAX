@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import Depends, Request
 
 from app.identity.application.authentication import AuthenticationService, OAuth2LoginService
@@ -109,34 +111,35 @@ async def revoke_session(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: AuthenticationService = Depends(deps.get_authentication_service),
 ) -> None:
-    from uuid import UUID
-
     await service.revoke_session(user_id=claims.subject_user_id, session_id=UUID(session_id))
 
 
 @router.get("/auth/oauth2/{provider}/authorize", response_model=DataResponse[OAuth2AuthorizationUrlResponse])
 async def oauth2_authorize(
     provider: str,
+    org_id: UUID,
     service: OAuth2LoginService = Depends(deps.get_oauth2_login_service),
 ) -> DataResponse[OAuth2AuthorizationUrlResponse]:
-    url, state = service.build_authorization_url(provider)
+    url, state = service.build_authorization_url(provider_key=provider, org_id=org_id)
     return DataResponse(data=OAuth2AuthorizationUrlResponse(authorization_url=url, state=state))
 
 
-@router.post("/auth/oauth2/{provider}/callback", response_model=DataResponse[TokenResponse])
+@router.post(
+    "/auth/oauth2/{provider}/callback",
+    response_model=DataResponse[TokenResponse | MfaChallengeResponse],
+)
 async def oauth2_callback(
     provider: str,
     request: OAuth2CallbackRequest,
+    http_request: Request,
     service: OAuth2LoginService = Depends(deps.get_oauth2_login_service),
-) -> DataResponse[TokenResponse]:
-    tokens = await service.login_with_callback(
-        provider_key=provider, code=request.code, org_id=request.org_id, ip_address="0.0.0.0", device_info=None
+) -> DataResponse[TokenResponse | MfaChallengeResponse]:
+    client_ip = http_request.client.host if http_request.client is not None else "unknown"
+    result = await service.login_with_callback(
+        provider_key=provider,
+        code=request.code,
+        state=request.state,
+        ip_address=client_ip,
+        device_info={"user_agent": http_request.headers.get("user-agent", "")},
     )
-    return DataResponse(
-        data=TokenResponse(
-            access_token=tokens.access_token,
-            refresh_token=tokens.refresh_token,
-            token_type=tokens.token_type,
-            expires_in_seconds=tokens.expires_in_seconds,
-        )
-    )
+    return DataResponse(data=_login_result_response(result))

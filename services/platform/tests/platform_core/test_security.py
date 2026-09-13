@@ -81,6 +81,14 @@ def test_field_encryption_key_must_be_a_valid_fernet_key(monkeypatch: pytest.Mon
         PlatformSettings(_env_file=None)
 
 
+def test_discord_oauth_configuration_must_be_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("OAUTH_DISCORD_CLIENT_ID", "client-id")
+
+    with pytest.raises(ValueError, match="must be configured together"):
+        PlatformSettings(_env_file=None)
+
+
 def test_password_hash_round_trips() -> None:
     service = PasswordHashingService()
     hashed = service.hash("Correct-Horse-Battery-Staple-9")

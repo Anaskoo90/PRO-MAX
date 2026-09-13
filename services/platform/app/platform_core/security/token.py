@@ -35,6 +35,14 @@ class MfaChallengeClaims:
     expires_at_epoch: int
 
 
+@dataclass(frozen=True, slots=True)
+class OAuthStateClaims:
+    org_id: UUID
+    provider_key: str
+    state_id: UUID
+    expires_at_epoch: int
+
+
 class JwtTokenService:
     def __init__(self, *, signing_key: str, algorithm: str = "HS256") -> None:
         self._signing_key = signing_key
@@ -96,6 +104,38 @@ class JwtTokenService:
             subject_user_id=UUID(payload["sub"]),
             org_id=UUID(payload["org_id"]),
             challenge_id=UUID(payload["jti"]),
+            expires_at_epoch=payload["exp"],
+        )
+
+    def issue_oauth_state_token(
+        self,
+        *,
+        org_id: UUID,
+        provider_key: str,
+        ttl: timedelta = timedelta(minutes=10),
+    ) -> str:
+        now = utcnow()
+        payload: dict[str, Any] = {
+            "sub": "oauth_authorization",
+            "org_id": str(org_id),
+            "provider": provider_key,
+            "jti": str(UUID(bytes=secrets.token_bytes(16))),
+            "token_use": "oauth_state",
+            "iat": int(now.timestamp()),
+            "exp": int((now + ttl).timestamp()),
+        }
+        return jwt.encode(payload, self._signing_key, algorithm=self._algorithm)
+
+    def verify_oauth_state_token(self, token: str) -> OAuthStateClaims:
+        payload = self._decode(
+            token,
+            expected_use="oauth_state",
+            additional_required_claims=("jti", "provider"),
+        )
+        return OAuthStateClaims(
+            org_id=UUID(payload["org_id"]),
+            provider_key=str(payload["provider"]),
+            state_id=UUID(payload["jti"]),
             expires_at_epoch=payload["exp"],
         )
 

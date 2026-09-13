@@ -156,6 +156,15 @@ def test_login_rejects_when_both_org_id_and_org_slug_are_given() -> None:
     assert response.status_code == 422
 
 
+def test_disabled_oauth_provider_returns_not_found_instead_of_internal_error() -> None:
+    response = client.get(
+        "/api/v1/auth/oauth2/discord/authorize",
+        params={"org_id": str(new_uuid7())},
+    )
+
+    assert response.status_code == 404
+
+
 def test_suspend_user_without_authorization_header_is_rejected() -> None:
     """Regression test: this endpoint previously had no authentication
     dependency at all (see users_router.py) — anyone could suspend any

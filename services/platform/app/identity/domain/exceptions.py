@@ -4,7 +4,10 @@ without any Identity-specific handler registration."""
 
 from __future__ import annotations
 
-from app.platform_core.errors.domain_exceptions import BusinessRuleViolationError, EntityNotFoundError
+from app.platform_core.errors.domain_exceptions import (
+    BusinessRuleViolationError,
+    EntityNotFoundError,
+)
 from app.platform_core.shared_kernel.error_codes import ErrorCode
 
 
@@ -99,6 +102,11 @@ class UserNotFoundError(EntityNotFoundError):
 class SessionNotFoundError(EntityNotFoundError):
     def __init__(self, session_id: object) -> None:
         super().__init__("Session", session_id)
+
+
+class OAuthProviderNotConfiguredError(EntityNotFoundError):
+    def __init__(self, provider_key: str) -> None:
+        super().__init__("OAuthProvider", provider_key)
 
 
 # --- Organization -----------------------------------------------------------
