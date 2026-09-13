@@ -204,6 +204,9 @@ class OrganizationManagementService:
             org = await uow.organizations.get_by_id(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
+            new_owner = await uow.users.get_by_id(EntityId(new_owner_user_id))
+            if new_owner is None or new_owner.org_id != org.id:
+                raise UserNotFoundError(new_owner_user_id)
             org.transfer_ownership(UserId(new_owner_user_id))
             await uow.organizations.update(org)
 

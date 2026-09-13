@@ -6,11 +6,22 @@ from uuid import UUID
 
 from fastapi import Depends, Request
 
-from app.identity.application.security import AuditLogQueryService, SecurityService, fingerprint_device
+from app.identity.application.security import (
+    AuditLogQueryService,
+    SecurityService,
+    fingerprint_device,
+)
 from app.identity.domain.audit import AuditEventCategory
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import require_permission
-from app.identity.presentation.schemas import AuditLogResponse, TrustDeviceRequest, TrustedDeviceResponse
+from app.identity.presentation.authorization import (
+    assert_path_org_matches_claims,
+    require_permission,
+)
+from app.identity.presentation.schemas import (
+    AuditLogResponse,
+    TrustDeviceRequest,
+    TrustedDeviceResponse,
+)
 from app.platform_core.api.responses import DataResponse
 from app.platform_core.api.versioning import versioned_router
 from app.platform_core.security.token import TokenClaims
@@ -47,10 +58,14 @@ async def list_trusted_devices(
 
 @router.delete("/users/me/trusted-devices/{device_id}", status_code=204)
 async def revoke_trusted_device(
-    device_id: str,
+    device_id: UUID,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: SecurityService = Depends(deps.get_security_service),
 ) -> None:
-    await service.device_trust_service.revoke_device(device_id=UUID(device_id))
+    await service.device_trust_service.revoke_device(
+        user_id=claims.subject_user_id,
+        device_id=device_id,
+    )
 
 
 @router.get(
@@ -61,9 +76,15 @@ async def list_audit_logs(
     org_id: str,
     category: AuditEventCategory | None = None,
     limit: int = 50,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: AuditLogQueryService = Depends(deps.get_audit_log_query_service),
 ) -> DataResponse[list[AuditLogResponse]]:
-    records = await service.list_for_org(org_id=UUID(org_id), category=category, limit=limit)
+    authenticated_org_id = assert_path_org_matches_claims(org_id, claims)
+    records = await service.list_for_org(
+        org_id=authenticated_org_id,
+        category=category,
+        limit=limit,
+    )
     return DataResponse(
         data=[
             AuditLogResponse(

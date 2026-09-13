@@ -1,8 +1,9 @@
 import pytest
-
 from app.identity.application.team_management import TeamService
-from app.identity.domain.exceptions import TeamNotFoundError
+from app.identity.domain.entities import User
+from app.identity.domain.exceptions import TeamNotFoundError, UserNotFoundError
 from app.identity.domain.team import Team, TeamMembership, TeamRole
+from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -40,10 +41,21 @@ class _Memberships:
         self.deleted = True
 
 
+class _Users:
+    def __init__(self, user: User | None = None) -> None:
+        self.user = user
+
+    async def get_by_id(self, user_id: EntityId) -> User | None:
+        return self.user if self.user is not None and self.user.id == user_id else None
+
+
 class _UnitOfWork:
-    def __init__(self, team: Team, membership: TeamMembership) -> None:
+    def __init__(
+        self, team: Team, membership: TeamMembership, user: User | None = None
+    ) -> None:
         self.teams = _Teams(team)
         self.team_memberships = _Memberships(membership)
+        self.users = _Users(user)
 
     async def __aenter__(self) -> "_UnitOfWork":
         return self
@@ -92,3 +104,30 @@ async def test_org_a_cannot_list_org_b_team_memberships() -> None:
 
     with pytest.raises(TeamNotFoundError):
         await service.list_members_for_org(org_id=org_a, team_id=team_b.id)
+
+
+@pytest.mark.asyncio
+async def test_team_cannot_add_a_user_owned_by_another_org() -> None:
+    org_a = OrgId(new_uuid7())
+    org_b = OrgId(new_uuid7())
+    team_a = Team.create(org_id=org_a, name="Organization A Team")
+    user_b = User.register(
+        org_id=org_b,
+        email=Email("foreign-member@example.com"),
+        password_hash="hash",
+        display_name="Foreign Member",
+    )
+    placeholder_membership = TeamMembership.create(
+        team_id=team_a.id, user_id=UserId(new_uuid7())
+    )
+    uow = _UnitOfWork(team_a, placeholder_membership, user_b)
+    service = TeamService(uow_factory=lambda: uow, dispatcher=EventDispatcher())
+
+    with pytest.raises(UserNotFoundError):
+        await service.add_member(
+            org_id=org_a,
+            team_id=team_a.id,
+            user_id=UserId(user_b.id),
+        )
+
+    assert uow.team_memberships.membership == placeholder_membership

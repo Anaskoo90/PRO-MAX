@@ -18,6 +18,7 @@ from hashlib import sha256
 from typing import Any
 
 from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
+from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.entities import PasswordHistoryEntry, User
 from app.identity.domain.exceptions import (
     AvatarNotFoundError,
@@ -33,7 +34,7 @@ from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
-from app.platform_core.shared_kernel.types import EntityId, OrgId
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.storage.interfaces import FileStorageProvider
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
@@ -228,30 +229,64 @@ class UserManagementService:
             await uow.commit()
             return user_to_profile_dto(user)
 
-    async def suspend(self, *, user_id: EntityId, reason: str) -> UserProfileDTO:
+    async def suspend(
+        self,
+        *,
+        org_id: OrgId,
+        user_id: EntityId,
+        reason: str,
+        actor_user_id: UserId,
+    ) -> UserProfileDTO:
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
-            if user is None:
+            if user is None or user.org_id != org_id:
                 raise UserNotFoundError(user_id)
             user.suspend(reason=reason)
             await uow.users.update(user)
             events = user.pull_domain_events()
+            await uow.audit_logs.add(
+                AuditLogRecord.create(
+                    org_id=user.org_id,
+                    category=AuditEventCategory.USER_CHANGE,
+                    action="user_suspended",
+                    actor_user_id=actor_user_id,
+                    resource_type="user",
+                    resource_id=str(user.id),
+                    metadata={"reason": reason},
+                )
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
-                org_id=user.org_id, actor_id=None, action="user_suspended", resource_type="user",
+                org_id=user.org_id, actor_id=actor_user_id, action="user_suspended", resource_type="user",
                 resource_id=str(user.id), metadata={"reason": reason},
             )
             return user_to_profile_dto(user)
 
-    async def reactivate(self, *, user_id: EntityId) -> UserProfileDTO:
+    async def reactivate(
+        self,
+        *,
+        org_id: OrgId,
+        user_id: EntityId,
+        actor_user_id: UserId,
+    ) -> UserProfileDTO:
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
-            if user is None:
+            if user is None or user.org_id != org_id:
                 raise UserNotFoundError(user_id)
             user.reactivate()
             await uow.users.update(user)
             events = user.pull_domain_events()
+            await uow.audit_logs.add(
+                AuditLogRecord.create(
+                    org_id=user.org_id,
+                    category=AuditEventCategory.USER_CHANGE,
+                    action="user_reactivated",
+                    actor_user_id=actor_user_id,
+                    resource_type="user",
+                    resource_id=str(user.id),
+                )
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return user_to_profile_dto(user)

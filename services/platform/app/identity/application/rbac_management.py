@@ -93,11 +93,18 @@ class RoleService:
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
 
-    async def update_role(self, *, role_id: EntityId, name: str | None, actor_user_id: UUID) -> RoleDTO:
+    async def update_role(
+        self,
+        *,
+        org_id: OrgId,
+        role_id: EntityId,
+        name: str | None,
+        actor_user_id: UUID,
+    ) -> RoleDTO:
         async with self._uow_factory() as uow:
-            role = await uow.roles.get_by_id(role_id)
-            if role is None:
-                raise RoleNotFoundError(role_id)
+            role = await self._get_mutable_role_for_org(
+                uow, role_id=role_id, org_id=org_id
+            )
             if name is not None:
                 role.rename(name)
             await uow.roles.update(role)
@@ -112,11 +119,18 @@ class RoleService:
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
 
-    async def set_parent(self, *, role_id: EntityId, parent_role_id: EntityId | None) -> RoleDTO:
+    async def set_parent(
+        self,
+        *,
+        org_id: OrgId,
+        role_id: EntityId,
+        parent_role_id: EntityId | None,
+        actor_user_id: UUID,
+    ) -> RoleDTO:
         async with self._uow_factory() as uow:
-            role = await uow.roles.get_by_id(role_id)
-            if role is None:
-                raise RoleNotFoundError(role_id)
+            role = await self._get_mutable_role_for_org(
+                uow, role_id=role_id, org_id=org_id
+            )
             if parent_role_id is not None:
                 cursor: EntityId | None = parent_role_id
                 visited: set[EntityId] = set()
@@ -127,19 +141,40 @@ class RoleService:
                         break
                     visited.add(cursor)
                     ancestor = await uow.roles.get_by_id(cursor)
-                    cursor = ancestor.parent_role_id if ancestor else None
+                    if ancestor is None or (
+                        ancestor.org_id is not None and ancestor.org_id != org_id
+                    ):
+                        raise RoleNotFoundError(cursor)
+                    cursor = ancestor.parent_role_id
             role.set_parent(parent_role_id)
             await uow.roles.update(role)
             events = role.pull_domain_events()
+            await uow.audit_logs.add(
+                AuditLogRecord.create(
+                    org_id=org_id,
+                    category=AuditEventCategory.ROLE_CHANGE,
+                    action="role_parent_updated",
+                    actor_user_id=actor_user_id,
+                    resource_type="role",
+                    resource_id=str(role.id),
+                    metadata={
+                        "parent_role_id": (
+                            str(parent_role_id) if parent_role_id is not None else None
+                        )
+                    },
+                )
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
 
-    async def delete_role(self, *, role_id: EntityId, actor_user_id: UUID) -> None:
+    async def delete_role(
+        self, *, org_id: OrgId, role_id: EntityId, actor_user_id: UUID
+    ) -> None:
         async with self._uow_factory() as uow:
-            role = await uow.roles.get_by_id(role_id)
-            if role is None:
-                raise RoleNotFoundError(role_id)
+            role = await self._get_mutable_role_for_org(
+                uow, role_id=role_id, org_id=org_id
+            )
             role.mark_deleted()
             events = role.pull_domain_events()
             await uow.roles.delete(role_id)
@@ -152,11 +187,18 @@ class RoleService:
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
-    async def grant_permission(self, *, role_id: EntityId, permission_id: EntityId, actor_user_id: UUID) -> RoleDTO:
+    async def grant_permission(
+        self,
+        *,
+        org_id: OrgId,
+        role_id: EntityId,
+        permission_id: EntityId,
+        actor_user_id: UUID,
+    ) -> RoleDTO:
         async with self._uow_factory() as uow:
-            role = await uow.roles.get_by_id(role_id)
-            if role is None:
-                raise RoleNotFoundError(role_id)
+            role = await self._get_mutable_role_for_org(
+                uow, role_id=role_id, org_id=org_id
+            )
             await self._permission_catalog.validate_exists(uow, permission_id=permission_id)
             role.grant_permission(permission_id)
             await uow.roles.update(role)
@@ -172,11 +214,18 @@ class RoleService:
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
 
-    async def revoke_permission(self, *, role_id: EntityId, permission_id: EntityId, actor_user_id: UUID) -> RoleDTO:
+    async def revoke_permission(
+        self,
+        *,
+        org_id: OrgId,
+        role_id: EntityId,
+        permission_id: EntityId,
+        actor_user_id: UUID,
+    ) -> RoleDTO:
         async with self._uow_factory() as uow:
-            role = await uow.roles.get_by_id(role_id)
-            if role is None:
-                raise RoleNotFoundError(role_id)
+            role = await self._get_mutable_role_for_org(
+                uow, role_id=role_id, org_id=org_id
+            )
             role.revoke_permission(permission_id)
             await uow.roles.update(role)
             events = role.pull_domain_events()
@@ -252,3 +301,12 @@ class RoleService:
             assignments = await uow.user_role_assignments.list_for_user(user_id, org_id)
             roles = [await uow.roles.get_by_id(a.role_id) for a in assignments]
             return [_role_to_dto(r) for r in roles if r is not None]
+
+    @staticmethod
+    async def _get_mutable_role_for_org(
+        uow, *, role_id: EntityId, org_id: OrgId
+    ) -> Role:
+        role = await uow.roles.get_by_id(role_id)
+        if role is None or role.org_id != org_id:
+            raise RoleNotFoundError(role_id)
+        return role

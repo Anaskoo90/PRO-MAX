@@ -158,9 +158,9 @@ class DeviceTrustService:
         async with self._uow_factory() as uow:
             return await uow.trusted_devices.list_for_user(user_id)
 
-    async def revoke_device(self, *, device_id) -> None:
+    async def revoke_device(self, *, user_id: UserId, device_id: EntityId) -> None:
         async with self._uow_factory() as uow:
-            await uow.trusted_devices.delete(device_id)
+            await uow.trusted_devices.delete_for_user(device_id, user_id)
             await uow.commit()
 
 

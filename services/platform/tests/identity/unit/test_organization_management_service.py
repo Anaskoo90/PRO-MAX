@@ -1,8 +1,11 @@
 import pytest
-
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.domain.entities import User, UserStatus
-from app.identity.domain.exceptions import OrganizationNotFoundError, OrganizationSlugTakenError, UserNotFoundError
+from app.identity.domain.exceptions import (
+    OrganizationNotFoundError,
+    OrganizationSlugTakenError,
+    UserNotFoundError,
+)
 from app.identity.domain.organization import Organization
 from app.identity.domain.value_objects import Email
 from app.platform_core.api.sorting import SortField
@@ -10,6 +13,7 @@ from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.identity.unit.fakes import FakeUnitOfWork
 
 pytestmark = pytest.mark.asyncio
@@ -205,3 +209,49 @@ async def test_get_member_raises_not_found_for_an_unknown_user() -> None:
 
     with pytest.raises(UserNotFoundError):
         await service.get_member(org_id=OrgId(new_uuid7()), user_id=EntityId(new_uuid7()))
+
+
+async def test_transfer_ownership_rejects_a_user_from_another_org() -> None:
+    uow = FakeUnitOfWork()
+    org = _make_org()
+    foreign_user = _make_member(
+        OrgId(new_uuid7()),
+        email="foreign-owner@example.com",
+        display_name="Foreign Owner",
+    )
+    await uow.organizations.add(org)
+    await uow.users.add(foreign_user)
+    original_owner_user_id = org.owner_user_id
+    service = _make_service(uow)
+
+    with pytest.raises(UserNotFoundError):
+        await service.transfer_ownership(
+            org_id=org.id,
+            new_owner_user_id=foreign_user.id,
+            actor_user_id=new_uuid7(),
+        )
+
+    assert org.owner_user_id == original_owner_user_id
+    assert uow.audit_logs.records == []
+
+
+async def test_transfer_ownership_allows_a_same_org_member() -> None:
+    uow = FakeUnitOfWork()
+    org = _make_org()
+    member = _make_member(
+        OrgId(org.id),
+        email="new-owner@example.com",
+        display_name="New Owner",
+    )
+    await uow.organizations.add(org)
+    await uow.users.add(member)
+    service = _make_service(uow)
+
+    result = await service.transfer_ownership(
+        org_id=org.id,
+        new_owner_user_id=member.id,
+        actor_user_id=new_uuid7(),
+    )
+
+    assert result.owner_user_id == member.id
+    assert uow.audit_logs.records[-1].action == "ownership_transferred"

@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.identity.domain.exceptions import TeamHierarchyCycleError, TeamMembershipNotFoundError, TeamNotFoundError
+from app.identity.domain.exceptions import (
+    TeamHierarchyCycleError,
+    TeamMembershipNotFoundError,
+    TeamNotFoundError,
+    UserNotFoundError,
+)
 from app.identity.domain.team import Team, TeamMembership, TeamRole
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
@@ -106,6 +111,9 @@ class TeamService:
     ) -> TeamMembershipDTO:
         async with self._uow_factory() as uow:
             await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
+            user = await uow.users.get_by_id(EntityId(user_id))
+            if user is None or user.org_id != org_id:
+                raise UserNotFoundError(user_id)
             existing = await uow.team_memberships.get(team_id, user_id)
             if existing is not None:
                 return _membership_to_dto(existing)

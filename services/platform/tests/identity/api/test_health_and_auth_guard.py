@@ -198,6 +198,97 @@ def test_reactivate_user_without_authorization_header_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_revoke_trusted_device_without_authorization_header_is_rejected() -> None:
+    response = client.delete(
+        "/api/v1/users/me/trusted-devices/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 401
+
+
+class _DeviceTrustServiceSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def revoke_device(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
+class _SecurityServiceSpy:
+    def __init__(self) -> None:
+        self.device_trust_service = _DeviceTrustServiceSpy()
+
+
+def test_revoke_trusted_device_is_scoped_to_the_authenticated_user() -> None:
+    org_id = new_uuid7()
+    user_id = new_uuid7()
+    device_id = new_uuid7()
+    token = identity_module.token_service.issue_access_token(
+        user_id=user_id, org_id=org_id, scopes=[]
+    )
+    service = _SecurityServiceSpy()
+    app.dependency_overrides[deps.get_security_service] = lambda: service
+
+    try:
+        response = client.delete(
+            f"/api/v1/users/me/trusted-devices/{device_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_security_service, None)
+
+    assert response.status_code == 204
+    assert service.device_trust_service.calls == [{"user_id": user_id, "device_id": device_id}]
+
+
+class _AuditLogQueryServiceSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def list_for_org(self, **kwargs):
+        self.calls.append(kwargs)
+        return []
+
+
+def test_audit_log_route_rejects_cross_tenant_path_before_querying() -> None:
+    org_a = new_uuid7()
+    org_b = new_uuid7()
+    service = _AuditLogQueryServiceSpy()
+    app.dependency_overrides[deps.get_permission_evaluator] = lambda: _AllowAllPermissions()
+    app.dependency_overrides[deps.get_audit_log_query_service] = lambda: service
+
+    try:
+        response = client.get(
+            f"/api/v1/organizations/{org_b}/audit-logs",
+            headers=_invitation_test_headers(org_a),
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_permission_evaluator, None)
+        app.dependency_overrides.pop(deps.get_audit_log_query_service, None)
+
+    assert response.status_code == 403
+    assert service.calls == []
+
+
+def test_audit_log_route_allows_authorized_same_tenant_query() -> None:
+    org_id = new_uuid7()
+    service = _AuditLogQueryServiceSpy()
+    app.dependency_overrides[deps.get_permission_evaluator] = lambda: _AllowAllPermissions()
+    app.dependency_overrides[deps.get_audit_log_query_service] = lambda: service
+
+    try:
+        response = client.get(
+            f"/api/v1/organizations/{org_id}/audit-logs",
+            headers=_invitation_test_headers(org_id),
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_permission_evaluator, None)
+        app.dependency_overrides.pop(deps.get_audit_log_query_service, None)
+
+    assert response.status_code == 200
+    assert response.json() == {"data": []}
+    assert service.calls == [{"org_id": org_id, "category": None, "limit": 50}]
+
+
 _ORG_ID = "00000000-0000-0000-0000-000000000000"
 _USER_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -208,6 +299,11 @@ def test_list_roles_without_authorization_header_is_rejected() -> None:
     the catalog) at all, so any org's custom role names and permission
     grants were readable by anyone, unauthenticated."""
     response = client.get(f"/api/v1/organizations/{_ORG_ID}/roles")
+    assert response.status_code == 401
+
+
+def test_permission_catalog_without_authorization_header_is_rejected() -> None:
+    response = client.get("/api/v1/permissions")
     assert response.status_code == 401
 
 

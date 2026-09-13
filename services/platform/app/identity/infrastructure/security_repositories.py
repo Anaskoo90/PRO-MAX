@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.domain.security_entities import TrustedDevice
@@ -31,7 +31,10 @@ class SqlAlchemyTrustedDeviceRepository:
     async def add(self, device: TrustedDevice) -> None:
         self._session.add(mappers.trusted_device_to_orm(device))
 
-    async def delete(self, device_id: EntityId) -> None:
-        row = await self._session.get(TrustedDeviceOrmModel, device_id)
-        if row is not None:
-            await self._session.delete(row)
+    async def delete_for_user(self, device_id: EntityId, user_id: UserId) -> None:
+        await self._session.execute(
+            delete(TrustedDeviceOrmModel).where(
+                TrustedDeviceOrmModel.id == device_id,
+                TrustedDeviceOrmModel.user_id == user_id,
+            )
+        )

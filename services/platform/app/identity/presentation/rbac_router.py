@@ -8,7 +8,10 @@ from fastapi import Depends
 
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import assert_path_org_matches_claims, require_permission
+from app.identity.presentation.authorization import (
+    assert_path_org_matches_claims,
+    require_permission,
+)
 from app.identity.presentation.schemas import (
     AssignRoleRequest,
     CreateRoleRequest,
@@ -35,6 +38,7 @@ def _role_response(dto) -> RoleResponse:
 
 @router.get("/permissions", response_model=DataResponse[list[PermissionResponse]])
 async def list_permission_catalog(
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: PermissionCatalogService = Depends(deps.get_permission_catalog_service),
 ) -> DataResponse[list[PermissionResponse]]:
     permissions = await service.list_catalog()
@@ -121,7 +125,12 @@ async def update_role(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: RoleService = Depends(deps.get_role_service),
 ) -> DataResponse[RoleResponse]:
-    role = await service.update_role(role_id=UUID(role_id), name=request.name, actor_user_id=claims.subject_user_id)
+    role = await service.update_role(
+        org_id=claims.org_id,
+        role_id=UUID(role_id),
+        name=request.name,
+        actor_user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_role_response(role))
 
 
@@ -132,9 +141,15 @@ async def update_role(
 async def set_role_parent(
     role_id: str,
     request: SetRoleParentRequest,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: RoleService = Depends(deps.get_role_service),
 ) -> DataResponse[RoleResponse]:
-    role = await service.set_parent(role_id=UUID(role_id), parent_role_id=request.parent_role_id)
+    role = await service.set_parent(
+        org_id=claims.org_id,
+        role_id=UUID(role_id),
+        parent_role_id=request.parent_role_id,
+        actor_user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_role_response(role))
 
 
@@ -147,7 +162,11 @@ async def delete_role(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: RoleService = Depends(deps.get_role_service),
 ) -> None:
-    await service.delete_role(role_id=UUID(role_id), actor_user_id=claims.subject_user_id)
+    await service.delete_role(
+        org_id=claims.org_id,
+        role_id=UUID(role_id),
+        actor_user_id=claims.subject_user_id,
+    )
 
 
 @router.post(
@@ -161,7 +180,10 @@ async def grant_permission(
     service: RoleService = Depends(deps.get_role_service),
 ) -> DataResponse[RoleResponse]:
     role = await service.grant_permission(
-        role_id=UUID(role_id), permission_id=request.permission_id, actor_user_id=claims.subject_user_id
+        org_id=claims.org_id,
+        role_id=UUID(role_id),
+        permission_id=request.permission_id,
+        actor_user_id=claims.subject_user_id,
     )
     return DataResponse(data=_role_response(role))
 
@@ -177,7 +199,10 @@ async def revoke_permission(
     service: RoleService = Depends(deps.get_role_service),
 ) -> DataResponse[RoleResponse]:
     role = await service.revoke_permission(
-        role_id=UUID(role_id), permission_id=UUID(permission_id), actor_user_id=claims.subject_user_id
+        org_id=claims.org_id,
+        role_id=UUID(role_id),
+        permission_id=UUID(permission_id),
+        actor_user_id=claims.subject_user_id,
     )
     return DataResponse(data=_role_response(role))
 

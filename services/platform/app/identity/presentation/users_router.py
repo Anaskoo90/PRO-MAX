@@ -127,7 +127,12 @@ async def suspend_user(
     had no authentication dependency at all."""
     from uuid import UUID
 
-    profile = await service.suspend(user_id=UUID(user_id), reason=reason)
+    profile = await service.suspend(
+        org_id=claims.org_id,
+        user_id=UUID(user_id),
+        reason=reason,
+        actor_user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_to_response(profile))
 
 
@@ -143,5 +148,9 @@ async def reactivate_user(
 ) -> DataResponse[UserProfileResponse]:
     from uuid import UUID
 
-    profile = await service.reactivate(user_id=UUID(user_id))
+    profile = await service.reactivate(
+        org_id=claims.org_id,
+        user_id=UUID(user_id),
+        actor_user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_to_response(profile))
