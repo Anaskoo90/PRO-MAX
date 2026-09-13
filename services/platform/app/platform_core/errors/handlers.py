@@ -27,7 +27,7 @@ _logger = get_logger("errors")
 
 _DOMAIN_STATUS_MAP: dict[type[GuildDeskError], int] = {
     EntityNotFoundError: status.HTTP_404_NOT_FOUND,
-    BusinessRuleViolationError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    BusinessRuleViolationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ConcurrencyConflictError: status.HTTP_409_CONFLICT,
 }
 
@@ -70,7 +70,7 @@ async def _handle_validation_error(
         for e in exc.errors()
     ]
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content=ErrorResponse.build(
             ErrorCode.VALIDATION_FAILED, "Request validation failed", details
         ).model_dump(mode="json"),
