@@ -1,0 +1,107 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/backend-ci.yml"
+      - "services/platform/**"
+      - "discord_bot/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  pull_request:
+    paths:
+      - ".github/workflows/backend-ci.yml"
+      - "services/platform/**"
+      - "discord_bot/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://guilddesk:guilddesk@127.0.0.1:5432/guilddesk_test
+      GUILDDESK_TEST_DATABASE_URL: postgresql+asyncpg://guilddesk:guilddesk@127.0.0.1:5432/guilddesk_test
+      REDIS_URL: redis://127.0.0.1:6379/0
+      RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
+      GUILDDESK_SECRET_JWT_SIGNING_KEY: ci-only-jwt-signing-key-32-characters
+      GUILDDESK_SECRET_TOKEN_HASH_PEPPER: ci-only-token-hash-pepper-32-characters
+      GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      CORS_ALLOWED_ORIGINS: "[]"
+      WEB_APP_BASE_URL: http://localhost:5173
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_PATH: /tmp/guilddesk-storage
+      AI_PROVIDER: disabled
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: guilddesk
+          POSTGRES_PASSWORD: guilddesk
+          POSTGRES_DB: guilddesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U guilddesk -d guilddesk_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.9.22"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --all-packages --all-extras --dev
+
+      - name: Apply database migrations
+        working-directory: services/platform
+        run: uv run alembic upgrade head
+
+      - name: Run platform tests
+        run: uv run --package guilddesk-platform pytest -q services/platform
+
+      - name: Run Discord bot tests
+        run: uv run --package guilddesk-discord-bot pytest -q discord_bot/tests
+
+      - name: Build platform image
+        run: docker build --file services/platform/Dockerfile --tag guilddesk-platform:ci .
+
+      - name: Build Discord bot image
+        run: docker build --file discord_bot/Dockerfile --tag guilddesk-discord-bot:ci .
