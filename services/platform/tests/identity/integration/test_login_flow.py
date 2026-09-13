@@ -14,7 +14,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-
 from app.identity.application.authentication import AuthenticationService
 from app.identity.domain.entities import User
 from app.identity.domain.exceptions import InvalidCredentialsError, SessionNotFoundError
@@ -26,6 +25,7 @@ from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.identity.unit.fakes import FakeAuditRecordSink
 
 pytestmark = pytest.mark.asyncio
@@ -67,7 +67,7 @@ async def test_login_with_org_id_against_real_database(uow) -> None:
     )
 
     assert result.tokens is not None
-    assert result.mfa_challenge_user_id is None
+    assert result.mfa_challenge_token is None
 
 
 async def test_login_with_org_slug_against_real_database(uow) -> None:

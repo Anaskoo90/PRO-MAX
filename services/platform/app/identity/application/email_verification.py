@@ -34,9 +34,6 @@ from app.platform_core.shared_kernel.types import EntityId, OrgId
 
 _logger = get_logger("identity.email_verification")
 
-_TOKEN_PEPPER = "change-me-in-production"  # see platform_core.security.secrets_provider
-
-
 class EmailVerificationService:
     def __init__(
         self,
@@ -44,11 +41,13 @@ class EmailVerificationService:
         uow_factory,
         notification_dispatcher: NotificationDispatcher,
         dispatcher: EventDispatcher,
+        token_pepper: str,
         verification_link_base_url: str = "https://app.guilddesk.local/verify-email",
     ) -> None:
         self._uow_factory = uow_factory
         self._notification_dispatcher = notification_dispatcher
         self._dispatcher = dispatcher
+        self._token_pepper = token_pepper
         self._verification_link_base_url = verification_link_base_url
 
     async def on_user_registered(self, event: UserRegistered) -> None:
@@ -58,7 +57,7 @@ class EmailVerificationService:
 
     async def send_verification(self, *, user_id: EntityId, org_id: OrgId, email: str) -> None:
         raw_token = secrets.token_urlsafe(32)
-        token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
 
         async with self._uow_factory() as uow:
             await uow.email_verification_tokens.invalidate_outstanding_for_user(user_id)
@@ -102,7 +101,7 @@ class EmailVerificationService:
         await self.send_verification(user_id=user.id, org_id=user.org_id, email=str(user.email))
 
     async def verify_email(self, *, raw_token: str) -> None:
-        token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
         async with self._uow_factory() as uow:
             token = await uow.email_verification_tokens.get_by_token_hash(token_hash)
             if token is None:

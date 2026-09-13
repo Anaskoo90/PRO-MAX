@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from app.identity.application.authentication import AuthenticationService, OAuth2LoginService
 from app.identity.application.dtos import LoginResult
@@ -32,9 +32,9 @@ def _login_result_response(result: LoginResult) -> TokenResponse | MfaChallengeR
             token_type=result.tokens.token_type,
             expires_in_seconds=result.tokens.expires_in_seconds,
         )
-    assert result.mfa_challenge_user_id is not None
+    assert result.mfa_challenge_token is not None
     return MfaChallengeResponse(
-        mfa_challenge_user_id=result.mfa_challenge_user_id,
+        mfa_challenge_token=result.mfa_challenge_token,
         available_factors=list(result.mfa_available_factors),
     )
 
@@ -42,15 +42,17 @@ def _login_result_response(result: LoginResult) -> TokenResponse | MfaChallengeR
 @router.post("/auth/login", response_model=None)
 async def login(
     request: LoginRequest,
+    http_request: Request,
     service: AuthenticationService = Depends(deps.get_authentication_service),
 ) -> TokenResponse | MfaChallengeResponse:
+    client_ip = http_request.client.host if http_request.client is not None else "unknown"
     result = await service.login(
         org_id=request.org_id,
         org_slug=request.org_slug,
         email=request.email,
         password=request.password,
-        ip_address="0.0.0.0",  # replaced by the real client IP once behind a reverse proxy config
-        device_info=None,
+        ip_address=client_ip,
+        device_info={"user_agent": http_request.headers.get("user-agent", "")},
         remember_me=request.remember_me,
     )
     return _login_result_response(result)

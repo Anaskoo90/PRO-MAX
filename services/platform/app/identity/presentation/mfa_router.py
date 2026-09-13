@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from app.identity.application.dtos import AuthTokens
 from app.identity.application.mfa import MfaService
@@ -75,15 +75,17 @@ async def disable_mfa(
 @router.post("/auth/mfa/verify", response_model=DataResponse[TokenResponse])
 async def verify_mfa_challenge(
     request: VerifyMfaChallengeRequest,
+    http_request: Request,
     service: MfaService = Depends(deps.get_mfa_service),
 ) -> DataResponse[TokenResponse]:
     """Not behind get_current_user_claims — the caller doesn't have a full
-    access token yet, only the mfa_challenge_user_id returned by /auth/login."""
+    access token yet, only the signed challenge returned by /auth/login."""
+    client_ip = http_request.client.host if http_request.client is not None else "unknown"
     tokens = await service.verify_mfa_challenge(
-        user_id=request.user_id,
+        challenge_token=request.challenge_token,
         code=request.code,
-        ip_address="0.0.0.0",
-        device_info=None,
+        ip_address=client_ip,
+        device_info={"user_agent": http_request.headers.get("user-agent", "")},
         remember_me=request.remember_me,
     )
     return DataResponse(data=_tokens_response(tokens))

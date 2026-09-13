@@ -51,9 +51,6 @@ from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 _logger = get_logger("identity.organization_invitations")
 
-_TOKEN_PEPPER = "change-me-in-production"  # see platform_core.security.secrets_provider
-
-
 @dataclass(frozen=True, slots=True)
 class OrganizationInvitationDTO:
     id: UUID
@@ -87,6 +84,7 @@ class OrganizationInvitationService:
         password_hasher: PasswordHashingService,
         notification_dispatcher: NotificationDispatcher,
         dispatcher: EventDispatcher,
+        token_pepper: str,
         password_policy: PasswordPolicy = DEFAULT_PASSWORD_POLICY,
         invitation_ttl: timedelta = timedelta(days=7),
         invitation_link_base_url: str = "https://app.guilddesk.local/accept-invitation",
@@ -95,6 +93,7 @@ class OrganizationInvitationService:
         self._password_hasher = password_hasher
         self._notification_dispatcher = notification_dispatcher
         self._dispatcher = dispatcher
+        self._token_pepper = token_pepper
         self._password_policy = password_policy
         self._invitation_ttl = invitation_ttl
         self._invitation_link_base_url = invitation_link_base_url
@@ -128,7 +127,7 @@ class OrganizationInvitationService:
                 await uow.organization_invitations.update(existing)
 
             raw_token = secrets.token_urlsafe(32)
-            token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+            token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
             invitation = OrganizationInvitation.create(
                 org_id=org_id,
                 email=normalized_email,
@@ -216,7 +215,7 @@ class OrganizationInvitationService:
     async def accept_invitation(
         self, *, raw_token: str, password: str, display_name: str
     ) -> UserProfileDTO:
-        token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
 
         violations = self._password_policy.violations(password)
         if violations:

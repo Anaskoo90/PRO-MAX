@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
         await workflow_engine_module.job_scheduler.stop()
         await boards_module.job_scheduler.stop()
         await tasks_module.job_scheduler.stop()
+        await identity_module.shutdown()
         await lifecycle.shutdown()
         await logger.ainfo("platform_core_shutdown_complete")
 

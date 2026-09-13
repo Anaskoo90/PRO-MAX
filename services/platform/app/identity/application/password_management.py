@@ -43,9 +43,6 @@ from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.platform_core.shared_kernel.utils import utcnow
 
 _logger = get_logger("identity.password_management")
-_TOKEN_PEPPER = "change-me-in-production"  # see platform_core.security.secrets_provider
-
-
 class PasswordManagementService:
     def __init__(
         self,
@@ -54,6 +51,7 @@ class PasswordManagementService:
         password_hasher: PasswordHashingService,
         notification_dispatcher: NotificationDispatcher,
         dispatcher: EventDispatcher,
+        token_pepper: str,
         password_policy: PasswordPolicy = DEFAULT_PASSWORD_POLICY,
         history_check_depth: int = 5,
         max_password_age: timedelta = timedelta(days=90),
@@ -63,6 +61,7 @@ class PasswordManagementService:
         self._password_hasher = password_hasher
         self._notification_dispatcher = notification_dispatcher
         self._dispatcher = dispatcher
+        self._token_pepper = token_pepper
         self._password_policy = password_policy
         self._history_check_depth = history_check_depth
         self._max_password_age = max_password_age
@@ -113,7 +112,7 @@ class PasswordManagementService:
                 return
 
             raw_token = secrets.token_urlsafe(32)
-            token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+            token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
             await uow.password_reset_tokens.invalidate_outstanding_for_user(user.id)
             await uow.password_reset_tokens.add(
                 PasswordResetToken.create(user_id=user.id, token_hash=token_hash)
@@ -151,7 +150,7 @@ class PasswordManagementService:
             )
 
     async def reset_password(self, *, raw_token: str, new_password: str) -> None:
-        token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_token, secret_pepper=self._token_pepper)
         async with self._uow_factory() as uow:
             token = await uow.password_reset_tokens.get_by_token_hash(token_hash)
             if token is None:

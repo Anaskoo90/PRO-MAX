@@ -38,12 +38,12 @@ class LoginRequest(BaseModel):
 
 class MfaChallengeResponse(BaseModel):
     mfa_required: bool = True
-    mfa_challenge_user_id: UUID
+    mfa_challenge_token: str
     available_factors: list[str]
 
 
 class VerifyMfaChallengeRequest(BaseModel):
-    user_id: UUID
+    challenge_token: str
     code: str
     remember_me: bool = False
 

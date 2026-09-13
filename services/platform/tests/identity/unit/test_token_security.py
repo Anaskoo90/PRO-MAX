@@ -1,6 +1,5 @@
 import jwt
 import pytest
-
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.utils import new_uuid7
 
@@ -48,3 +47,25 @@ def test_expired_token_fails_verification() -> None:
 
     with pytest.raises(jwt.ExpiredSignatureError):
         service.verify(token)
+
+
+def test_mfa_challenge_token_round_trips_and_cannot_be_used_as_access_token() -> None:
+    service = JwtTokenService(signing_key="a" * 32)
+    user_id = new_uuid7()
+    org_id = new_uuid7()
+    token = service.issue_mfa_challenge_token(user_id=user_id, org_id=org_id)
+
+    challenge = service.verify_mfa_challenge_token(token)
+
+    assert challenge.subject_user_id == user_id
+    assert challenge.org_id == org_id
+    with pytest.raises(jwt.InvalidTokenError):
+        service.verify(token)
+
+
+def test_access_token_cannot_be_used_as_an_mfa_challenge() -> None:
+    service = JwtTokenService(signing_key="a" * 32)
+    token = service.issue_access_token(user_id=new_uuid7(), org_id=new_uuid7(), scopes=[])
+
+    with pytest.raises(jwt.InvalidTokenError):
+        service.verify_mfa_challenge_token(token)

@@ -17,7 +17,15 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from app.identity.application.dtos import AuthTokens, LoginResult, SessionDTO
+from app.identity.application.ports import IdentityUnitOfWorkPort, OAuth2ClientPort
+from app.identity.application.security import SecurityService
 from app.identity.domain.entities import Session, User
+from app.identity.domain.events import (
+    SessionRevoked,
+    SuspiciousLoginDetected,
+    UserLoggedIn,
+    UserLoggedOut,
+)
 from app.identity.domain.exceptions import (
     AccountLockedError,
     InvalidCredentialsError,
@@ -25,11 +33,8 @@ from app.identity.domain.exceptions import (
     SessionNotFoundError,
     UserNotFoundError,
 )
-from app.identity.domain.events import SessionRevoked, SuspiciousLoginDetected, UserLoggedIn, UserLoggedOut
 from app.identity.domain.specifications import AccountLockoutSpecification
 from app.identity.domain.value_objects import Email
-from app.identity.application.ports import IdentityUnitOfWorkPort, OAuth2ClientPort
-from app.identity.application.security import SecurityService
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
@@ -43,6 +48,7 @@ class AuthPolicy:
     lockout_threshold: int = 5
     lockout_duration: timedelta = timedelta(minutes=15)
     access_token_ttl: timedelta = timedelta(minutes=15)
+    mfa_challenge_ttl: timedelta = timedelta(minutes=5)
     refresh_token_pepper: str = "change-me-in-production"  # see SecretProvider
 
 
@@ -108,10 +114,15 @@ class AuthenticationService:
             user.assert_can_authenticate()
 
             if user.mfa_enabled:
-                user.record_successful_login()
-                await uow.users.update(user)
-                await uow.commit()
-                return LoginResult(mfa_challenge_user_id=user.id, mfa_available_factors=("totp", "recovery_code"))
+                challenge_token = self._token_service.issue_mfa_challenge_token(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    ttl=self._policy.mfa_challenge_ttl,
+                )
+                return LoginResult(
+                    mfa_challenge_token=challenge_token,
+                    mfa_available_factors=("totp", "recovery_code"),
+                )
 
             user.record_successful_login()
             suspicious = await self._is_suspicious(user_id=user.id, ip_address=ip_address)
@@ -149,6 +160,8 @@ class AuthenticationService:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            user.assert_can_authenticate()
+            user.record_successful_login()
             suspicious = await self._is_suspicious(user_id=user.id, ip_address=ip_address)
             tokens, session = await self._issue_session(
                 uow, user, ip_address=ip_address, device_info=device_info, remember_me=remember_me
@@ -156,8 +169,16 @@ class AuthenticationService:
             events = [UserLoggedIn(aggregate_id=user.id, session_id=session.id)]
             if suspicious:
                 events.append(SuspiciousLoginDetected(aggregate_id=user.id, session_id=session.id, ip_address=ip_address))
+            await uow.users.update(user)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
+            await self._audit_logger.record(
+                org_id=user.org_id,
+                actor_id=user.id,
+                action="login",
+                resource_type="user",
+                resource_id=str(user.id),
+            )
             return tokens
 
     async def _is_suspicious(self, *, user_id: EntityId, ip_address: str) -> bool:

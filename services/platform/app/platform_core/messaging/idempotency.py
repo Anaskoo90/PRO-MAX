@@ -18,6 +18,19 @@ class IdempotencyStore(Protocol):
         ...
 
 
+class InMemoryIdempotencyStore:
+    """Process-local implementation for isolated tests."""
+
+    def __init__(self) -> None:
+        self._keys: set[str] = set()
+
+    async def check_and_mark(self, key: str, *, ttl_seconds: int) -> bool:
+        if key in self._keys:
+            return False
+        self._keys.add(key)
+        return True
+
+
 class RedisIdempotencyStore:
     """Uses SET key value NX EX ttl — atomic check-and-set in one round trip."""
 

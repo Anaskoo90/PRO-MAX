@@ -31,7 +31,7 @@ pytestmark = pytest.mark.asyncio
 # Must match OrganizationInvitationService's own pepper (same
 # "change-me-in-production" placeholder every token-based Identity module
 # uses) so a token minted here hashes to what the service looks up.
-_TOKEN_PEPPER = "change-me-in-production"
+_TOKEN_PEPPER = "test-token-pepper-with-at-least-32-characters"
 
 
 async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
@@ -74,6 +74,7 @@ def _service(
         password_hasher=PasswordHashingService(),
         notification_dispatcher=notification_dispatcher or NotificationDispatcher(),
         dispatcher=EventDispatcher(),
+        token_pepper=_TOKEN_PEPPER,
     )
 
 

@@ -27,6 +27,7 @@ from app.platform_core.shared_kernel.utils import new_uuid7
 pytestmark = pytest.mark.asyncio
 
 _PASSWORD = "Correct-Horse-Battery-9"
+_TOKEN_PEPPER = "test-token-pepper-with-at-least-32-characters"
 
 
 class _UnavailableEmailProvider:
@@ -42,6 +43,7 @@ def _make_service(
         password_hasher=PasswordHashingService(),
         notification_dispatcher=notification_dispatcher or NotificationDispatcher(),
         dispatcher=EventDispatcher(),
+        token_pepper=_TOKEN_PEPPER,
     )
 
 
@@ -95,7 +97,7 @@ async def test_password_reset_token_is_created_and_usable_despite_no_notificatio
     # The token must have actually been persisted (not skipped), and must
     # be the real, usable token — not just any row.
     token = await uow.password_reset_tokens.get_by_token_hash(
-        hash_for_lookup(known_raw_token, secret_pepper="change-me-in-production")
+        hash_for_lookup(known_raw_token, secret_pepper=_TOKEN_PEPPER)
     )
     assert token is not None
     assert token.user_id == user.id

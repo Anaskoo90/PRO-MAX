@@ -13,6 +13,8 @@ semantics rather than reimplementing config loading per context.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from functools import lru_cache
 from pathlib import Path
 
@@ -62,6 +64,15 @@ class PlatformSettings(BaseSettings):
         min_length=32,
         validation_alias="GUILDDESK_SECRET_JWT_SIGNING_KEY",
     )
+    token_hash_pepper: SecretStr = Field(
+        min_length=32,
+        validation_alias="GUILDDESK_SECRET_TOKEN_HASH_PEPPER",
+    )
+    field_encryption_key: SecretStr = Field(
+        min_length=44,
+        max_length=44,
+        validation_alias="GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY",
+    )
 
     smtp_host: str | None = None
     smtp_port: int = Field(default=1025, ge=1, le=65535)
@@ -79,6 +90,19 @@ class PlatformSettings(BaseSettings):
     @classmethod
     def _empty_smtp_values_are_unset(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("field_encryption_key")
+    @classmethod
+    def _field_encryption_key_must_be_fernet_compatible(cls, value: SecretStr) -> SecretStr:
+        try:
+            decoded = base64.b64decode(
+                value.get_secret_value().encode(), altchars=b"-_", validate=True
+            )
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("field encryption key must be a URL-safe base64 Fernet key") from exc
+        if len(decoded) != 32:
+            raise ValueError("field encryption key must decode to exactly 32 bytes")
+        return value
 
     @model_validator(mode="after")
     def _validate_production_constraints(self) -> PlatformSettings:

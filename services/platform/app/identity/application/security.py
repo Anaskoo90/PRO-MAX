@@ -61,6 +61,34 @@ class InMemoryRateLimitStore:
         return len(hits)
 
 
+class RedisRateLimitStore:
+    """Shared fixed-window counter for multi-replica deployments.
+
+    The Lua script makes increment-and-first-expiry atomic, avoiding a
+    permanent key if a process dies between separate INCR and EXPIRE calls.
+    """
+
+    _INCREMENT_SCRIPT = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+"""
+
+    def __init__(self, redis_client) -> None:
+        self._redis = redis_client
+
+    async def increment_and_get(self, key: str, *, window_seconds: int) -> int:
+        result = await self._redis.eval(
+            self._INCREMENT_SCRIPT,
+            1,
+            f"rate_limit:{key}",
+            window_seconds,
+        )
+        return int(result)
+
+
 @dataclass(frozen=True, slots=True)
 class BruteForcePolicy:
     max_attempts_per_window: int = 20
@@ -74,9 +102,9 @@ class BruteForceGuard:
         self._store = store
         self._policy = policy
 
-    async def check(self, *, ip_address: str) -> None:
+    async def check(self, *, ip_address: str, scope: str = "login") -> None:
         count = await self._store.increment_and_get(
-            f"login_attempts:{ip_address}", window_seconds=self._policy.window_seconds
+            f"{scope}_attempts:{ip_address}", window_seconds=self._policy.window_seconds
         )
         if count > self._policy.max_attempts_per_window:
             raise BruteForceProtectionTriggeredError(

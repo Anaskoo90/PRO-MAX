@@ -32,6 +32,7 @@ from tests.identity.unit.fakes import FakeAuditRecordSink
 pytestmark = pytest.mark.asyncio
 
 _PASSWORD = "Correct-Horse-Battery-9"
+_TOKEN_PEPPER = "test-token-pepper-with-at-least-32-characters"
 
 
 class _UnavailableEmailProvider:
@@ -50,6 +51,7 @@ def _make_services(uow, notification_dispatcher: NotificationDispatcher | None =
         uow_factory=lambda: uow,
         dispatcher=dispatcher,
         notification_dispatcher=notification_dispatcher or NotificationDispatcher(),
+        token_pepper=_TOKEN_PEPPER,
         verification_link_base_url="https://app.test/verify",
     )
     auth_service = AuthenticationService(
@@ -84,7 +86,7 @@ async def test_registration_succeeds_and_persists_verification_token_during_emai
         )
 
     token = await uow.email_verification_tokens.get_by_token_hash(
-        hash_for_lookup(known_raw_token, secret_pepper="change-me-in-production")
+        hash_for_lookup(known_raw_token, secret_pepper=_TOKEN_PEPPER)
     )
     assert token is not None
     assert token.user_id == owner_id
@@ -115,7 +117,7 @@ async def test_self_registration_fires_user_registered_and_creates_a_usable_veri
     # UserRegistered must have actually fired and been handled: a real,
     # usable verification token now exists.
     token = await uow.email_verification_tokens.get_by_token_hash(
-        hash_for_lookup(known_raw_token, secret_pepper="change-me-in-production")
+        hash_for_lookup(known_raw_token, secret_pepper=_TOKEN_PEPPER)
     )
     assert token is not None
     assert token.user_id == owner_id
@@ -138,6 +140,7 @@ async def test_self_registration_fires_user_registered_and_creates_a_usable_veri
         uow_factory=lambda: uow,
         dispatcher=EventDispatcher(),
         notification_dispatcher=NotificationDispatcher(),
+        token_pepper=_TOKEN_PEPPER,
         verification_link_base_url="https://app.test/verify",
     )
     await email_service.verify_email(raw_token=known_raw_token)

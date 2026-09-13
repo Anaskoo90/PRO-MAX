@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.identity.application.authentication import (
@@ -36,9 +37,10 @@ from app.identity.application.rbac_management import PermissionCatalogService, R
 from app.identity.application.security import (
     AuditLogQueryService,
     BruteForceGuard,
+    BruteForcePolicy,
     DeviceTrustService,
-    InMemoryRateLimitStore,
     IpRestrictionChecker,
+    RedisRateLimitStore,
     SecurityService,
     SuspiciousLoginDetector,
     SuspiciousLoginNotifier,
@@ -66,6 +68,7 @@ from app.platform_core.di.container import ServiceContainer
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger, AuditRecordSink
 from app.platform_core.logging.logger import get_logger
+from app.platform_core.messaging.idempotency import RedisIdempotencyStore
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
 from app.platform_core.notifications.email_provider import SmtpEmailProvider
 from app.platform_core.security.encryption import FieldEncryptionService
@@ -103,11 +106,15 @@ class IdentityModule:
         self._settings = settings
         engine = create_async_engine(str(settings.database_url))
         self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self.redis_client = Redis.from_url(str(settings.redis_url), decode_responses=True)
 
         self.dispatcher = EventDispatcher()
         self.password_hasher = PasswordHashingService()
         self.token_service = JwtTokenService(signing_key=settings.jwt_signing_key)
-        self.encryption = FieldEncryptionService(FieldEncryptionService.generate_key())
+        token_hash_pepper = settings.token_hash_pepper.get_secret_value()
+        self.encryption = FieldEncryptionService(
+            settings.field_encryption_key.get_secret_value().encode()
+        )
         self.audit_logger = AuditLogger(_LoggingAuditRecordSink())
         email_provider = None
         if settings.smtp_host:
@@ -146,8 +153,9 @@ class IdentityModule:
         )
 
         # --- Security submodule ---
+        rate_limit_store = RedisRateLimitStore(self.redis_client)
         self.security_service = SecurityService(
-            brute_force_guard=BruteForceGuard(store=InMemoryRateLimitStore()),
+            brute_force_guard=BruteForceGuard(store=rate_limit_store),
             ip_restriction_checker=IpRestrictionChecker(),
             device_trust_service=DeviceTrustService(uow_factory=uow_factory),
             suspicious_login_detector=SuspiciousLoginDetector(uow_factory=uow_factory),
@@ -166,7 +174,7 @@ class IdentityModule:
             dispatcher=self.dispatcher,
             audit_logger=self.audit_logger,
             security_service=self.security_service,
-            policy=AuthPolicy(),
+            policy=AuthPolicy(refresh_token_pepper=token_hash_pepper),
         )
         self.oauth2_login_service = OAuth2LoginService(
             uow_factory=uow_factory,
@@ -184,6 +192,7 @@ class IdentityModule:
             uow_factory=uow_factory,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            token_pepper=token_hash_pepper,
             verification_link_base_url=f"{web_app_base_url}/verify-email",
         )
         self.password_management_service = PasswordManagementService(
@@ -191,6 +200,7 @@ class IdentityModule:
             password_hasher=self.password_hasher,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            token_pepper=token_hash_pepper,
             reset_link_base_url=f"{web_app_base_url}/reset-password",
         )
         self.mfa_service = MfaService(
@@ -198,6 +208,13 @@ class IdentityModule:
             encryption=self.encryption,
             dispatcher=self.dispatcher,
             authentication_service=self.authentication_service,
+            recovery_code_pepper=token_hash_pepper,
+            token_service=self.token_service,
+            challenge_replay_store=RedisIdempotencyStore(self.redis_client),
+            attempt_guard=BruteForceGuard(
+                store=rate_limit_store,
+                policy=BruteForcePolicy(max_attempts_per_window=10, window_seconds=300),
+            ),
         )
         self.organization_management_service = OrganizationManagementService(
             uow_factory=uow_factory, password_hasher=self.password_hasher, dispatcher=self.dispatcher,
@@ -207,6 +224,7 @@ class IdentityModule:
             password_hasher=self.password_hasher,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            token_pepper=token_hash_pepper,
             invitation_link_base_url=f"{web_app_base_url}/accept-invitation",
         )
         self.team_service = TeamService(uow_factory=uow_factory, dispatcher=self.dispatcher)
@@ -223,6 +241,9 @@ class IdentityModule:
         session_factory this module uses internally, exposed deliberately
         rather than accessed via the private `_uow_factory` closure."""
         return self._uow_factory()
+
+    async def shutdown(self) -> None:
+        await self.redis_client.aclose()
 
     async def seed(self, *, extra_permissions: tuple = ()) -> None:
         """Idempotent — safe to call on every startup. Populates the

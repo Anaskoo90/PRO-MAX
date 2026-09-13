@@ -20,11 +20,11 @@ class AuthTokens:
 
 @dataclass(frozen=True, slots=True)
 class LoginResult:
-    """Either `tokens` is set (login complete) or `mfa_challenge_user_id`
+    """Either `tokens` is set (login complete) or `mfa_challenge_token`
     is set (caller must call VerifyMfaChallenge next) — never both."""
 
     tokens: AuthTokens | None = None
-    mfa_challenge_user_id: UUID | None = None
+    mfa_challenge_token: str | None = None
     mfa_available_factors: tuple[str, ...] = ()
 
 

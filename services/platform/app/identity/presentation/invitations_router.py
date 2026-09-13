@@ -6,7 +6,10 @@ from fastapi import Depends
 
 from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.presentation import deps
-from app.identity.presentation.authorization import require_permission
+from app.identity.presentation.authorization import (
+    assert_path_org_matches_claims,
+    require_permission,
+)
 from app.identity.presentation.schemas import (
     AcceptInvitationRequest,
     CreateInvitationRequest,
@@ -46,10 +49,12 @@ async def create_invitation(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationInvitationService = Depends(deps.get_organization_invitation_service),
 ) -> DataResponse[InvitationResponse]:
-    from uuid import UUID
-
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
     invitation = await service.invite_member(
-        org_id=UUID(org_id), email=request.email, role_id=request.role_id, invited_by_user_id=claims.subject_user_id
+        org_id=parsed_org_id,
+        email=request.email,
+        role_id=request.role_id,
+        invited_by_user_id=claims.subject_user_id,
     )
     return DataResponse(data=_to_response(invitation))
 
@@ -62,11 +67,11 @@ async def create_invitation(
 async def list_pending_invitations(
     org_id: str,
     page: PageParams = Depends(page_params),
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: OrganizationInvitationService = Depends(deps.get_organization_invitation_service),
 ) -> DataResponse[list[InvitationResponse]]:
-    from uuid import UUID
-
-    invitations = await service.list_pending(org_id=UUID(org_id), offset=page.offset, limit=page.limit)
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
+    invitations = await service.list_pending(org_id=parsed_org_id, offset=page.offset, limit=page.limit)
     return DataResponse(data=[_to_response(i) for i in invitations])
 
 
@@ -83,8 +88,11 @@ async def revoke_invitation(
 ) -> None:
     from uuid import UUID
 
+    parsed_org_id = assert_path_org_matches_claims(org_id, claims)
     await service.revoke_invitation(
-        org_id=UUID(org_id), invitation_id=UUID(invitation_id), actor_user_id=claims.subject_user_id
+        org_id=parsed_org_id,
+        invitation_id=UUID(invitation_id),
+        actor_user_id=claims.subject_user_id,
     )
 
 

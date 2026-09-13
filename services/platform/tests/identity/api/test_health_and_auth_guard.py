@@ -11,10 +11,10 @@ stack running.
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
+from app.identity.presentation import deps
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.utils import new_uuid7
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
@@ -46,6 +46,83 @@ def test_org_a_cannot_read_org_b_organization_or_teams() -> None:
 
     assert client.get(f"/api/v1/organizations/{org_b}", headers=headers).status_code == 403
     assert client.get(f"/api/v1/organizations/{org_b}/teams", headers=headers).status_code == 403
+
+
+class _AllowAllPermissions:
+    async def assert_permission(self, **kwargs) -> None:
+        return None
+
+
+class _InvitationServiceSpy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    async def invite_member(self, **kwargs):
+        self.calls.append(("create", kwargs))
+        raise AssertionError("cross-tenant create reached the application service")
+
+    async def list_pending(self, **kwargs):
+        self.calls.append(("list", kwargs))
+        return []
+
+    async def revoke_invitation(self, **kwargs) -> None:
+        self.calls.append(("revoke", kwargs))
+
+
+def _invitation_test_headers(org_id) -> dict[str, str]:
+    token = identity_module.token_service.issue_access_token(
+        user_id=new_uuid7(), org_id=org_id, scopes=[]
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_invitation_routes_reject_cross_tenant_path_ids_before_service_access() -> None:
+    org_a = new_uuid7()
+    org_b = new_uuid7()
+    role_id = new_uuid7()
+    invitation_id = new_uuid7()
+    service = _InvitationServiceSpy()
+    app.dependency_overrides[deps.get_permission_evaluator] = lambda: _AllowAllPermissions()
+    app.dependency_overrides[deps.get_organization_invitation_service] = lambda: service
+
+    try:
+        headers = _invitation_test_headers(org_a)
+        create = client.post(
+            f"/api/v1/organizations/{org_b}/invitations",
+            headers=headers,
+            json={"email": "invitee@example.com", "role_id": str(role_id)},
+        )
+        listing = client.get(f"/api/v1/organizations/{org_b}/invitations", headers=headers)
+        revoke = client.delete(
+            f"/api/v1/organizations/{org_b}/invitations/{invitation_id}", headers=headers
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_permission_evaluator, None)
+        app.dependency_overrides.pop(deps.get_organization_invitation_service, None)
+
+    assert (create.status_code, listing.status_code, revoke.status_code) == (403, 403, 403)
+    assert service.calls == []
+
+
+def test_authorized_same_tenant_invitation_listing_still_works() -> None:
+    org_id = new_uuid7()
+    service = _InvitationServiceSpy()
+    app.dependency_overrides[deps.get_permission_evaluator] = lambda: _AllowAllPermissions()
+    app.dependency_overrides[deps.get_organization_invitation_service] = lambda: service
+
+    try:
+        response = client.get(
+            f"/api/v1/organizations/{org_id}/invitations",
+            headers=_invitation_test_headers(org_id),
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_permission_evaluator, None)
+        app.dependency_overrides.pop(deps.get_organization_invitation_service, None)
+
+    assert response.status_code == 200
+    assert response.json() == {"data": []}
+    assert service.calls[0][0] == "list"
+    assert service.calls[0][1]["org_id"] == org_id
 
 
 def test_protected_route_with_malformed_authorization_header_is_rejected() -> None:

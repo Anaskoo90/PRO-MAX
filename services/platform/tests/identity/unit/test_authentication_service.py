@@ -1,5 +1,4 @@
 import pytest
-
 from app.identity.application.authentication import AuthenticationService
 from app.identity.domain.entities import User
 from app.identity.domain.exceptions import InvalidCredentialsError, OrganizationNotFoundError
@@ -11,6 +10,7 @@ from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.identity.unit.fakes import FakeAuditRecordSink, FakeUnitOfWork
 
 pytestmark = pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_login_with_org_id_succeeds_for_a_valid_active_user() -> None:
     )
 
     assert result.tokens is not None
-    assert result.mfa_challenge_user_id is None
+    assert result.mfa_challenge_token is None
 
 
 async def test_login_with_org_slug_resolves_to_the_same_organization() -> None:
