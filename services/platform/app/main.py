@@ -12,7 +12,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -63,6 +63,7 @@ from app.workflow_engine.composition import (  # noqa: E402
 )
 
 identity_module = IdentityModule(settings)
+health_registry.register(identity_module.redis_health_check)
 notifications_module = NotificationsModule(settings, identity_module)
 projects_module = ProjectsModule(settings, identity_module)
 tasks_module = TasksModule(settings, identity_module, projects_module)
@@ -118,11 +119,18 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await messaging_runtime.stop()
         await workflow_engine_module.job_scheduler.stop()
         await boards_module.job_scheduler.stop()
         await tasks_module.job_scheduler.stop()
+        await messaging_runtime.stop()
         await ai_gateway_module.shutdown()
+        await ticket_system_module.shutdown()
+        await discord_integration_module.shutdown()
+        await workflow_engine_module.shutdown()
+        await boards_module.shutdown()
+        await tasks_module.shutdown()
+        await projects_module.shutdown()
+        await notifications_module.shutdown()
         await identity_module.shutdown()
         await lifecycle.shutdown()
         await logger.ainfo("platform_core_shutdown_complete")
@@ -179,9 +187,11 @@ def create_app() -> FastAPI:
         return {"status": status.value}
 
     @app.get("/health/ready", tags=["observability"])
-    async def readiness() -> dict[str, str]:
-        status = await health_registry.readiness()
-        return {"status": status.value}
+    async def readiness(response: Response) -> dict[str, str]:
+        readiness_status = await health_registry.readiness()
+        if readiness_status == HealthStatus.UNHEALTHY:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": readiness_status.value}
 
     @app.get("/health", tags=["observability"])
     async def health() -> dict[str, object]:

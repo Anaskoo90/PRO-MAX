@@ -21,8 +21,8 @@ class NotificationsModule:
         self, settings: PlatformSettings, identity_module: IdentityModule
     ) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         def uow_factory() -> NotificationsUnitOfWork:
             return NotificationsUnitOfWork(session_factory)
@@ -38,6 +38,9 @@ class NotificationsModule:
 
     def register(self, container: ServiceContainer) -> None:
         container.register_instance(NotificationService, self.notification_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(router.router)

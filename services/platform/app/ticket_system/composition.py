@@ -54,8 +54,8 @@ class TicketSystemModule:
         discord_integration_module: DiscordIntegrationModule,
     ) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
 
@@ -100,6 +100,9 @@ class TicketSystemModule:
         container.register_instance(
             TicketAttachmentService, self.ticket_attachment_service
         )
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(tickets_router.router)

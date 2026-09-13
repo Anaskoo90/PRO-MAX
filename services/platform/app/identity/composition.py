@@ -74,6 +74,10 @@ from app.platform_core.logging.logger import get_logger
 from app.platform_core.messaging.idempotency import RedisIdempotencyStore
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
 from app.platform_core.notifications.email_provider import SmtpEmailProvider
+from app.platform_core.observability.health import (
+    DependencyCheckResult,
+    HealthStatus,
+)
 from app.platform_core.security.encryption import FieldEncryptionService
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
@@ -109,8 +113,8 @@ class IdentityModule:
 
     def __init__(self, settings: PlatformSettings) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
         self.redis_client = Redis.from_url(str(settings.redis_url), decode_responses=True)
 
         self.dispatcher = EventDispatcher()
@@ -286,7 +290,27 @@ class IdentityModule:
         return self._uow_factory()
 
     async def shutdown(self) -> None:
-        await self.redis_client.aclose()
+        try:
+            await self.redis_client.aclose()
+        finally:
+            await self._engine.dispose()
+
+    async def redis_health_check(self) -> DependencyCheckResult:
+        try:
+            is_available = await self.redis_client.ping()
+        except Exception as exc:
+            return DependencyCheckResult(
+                name="redis",
+                status=HealthStatus.UNHEALTHY,
+                detail=str(exc),
+            )
+        if not is_available:
+            return DependencyCheckResult(
+                name="redis",
+                status=HealthStatus.UNHEALTHY,
+                detail="Redis PING did not return a successful response",
+            )
+        return DependencyCheckResult(name="redis", status=HealthStatus.HEALTHY)
 
     async def seed(self, *, extra_permissions: tuple = ()) -> None:
         """Idempotent — safe to call on every startup. Populates the

@@ -38,8 +38,8 @@ class DiscordIntegrationModule:
 
     def __init__(self, settings: DiscordIntegrationSettings, identity_module: IdentityModule) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
 
@@ -65,6 +65,9 @@ class DiscordIntegrationModule:
 
     def register(self, container: ServiceContainer) -> None:
         container.register_instance(DiscordSetupService, self.discord_setup_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(setup_router.router)

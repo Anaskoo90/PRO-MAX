@@ -65,8 +65,8 @@ class BoardsModule:
         tasks_module: TasksModule,
     ) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
 
@@ -147,6 +147,9 @@ class BoardsModule:
         container.register_instance(SprintService, self.sprint_service)
         container.register_instance(SprintReportingService, self.sprint_reporting_service)
         container.register_instance(EstimateService, self.estimate_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(boards_router.router)

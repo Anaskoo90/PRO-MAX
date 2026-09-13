@@ -13,13 +13,13 @@ WORKDIR /srv/guilddesk
 COPY pyproject.toml uv.lock ./
 COPY services/platform/pyproject.toml ./services/platform/pyproject.toml
 COPY discord_bot/pyproject.toml ./discord_bot/pyproject.toml
-COPY services/platform/app ./services/platform/app
-COPY services/platform/alembic ./services/platform/alembic
-COPY services/platform/alembic.ini ./services/platform/alembic.ini
 
 RUN python -m pip install uv==0.9.22 \
-    && uv sync --frozen --no-dev --package guilddesk-platform --no-editable \
-    && chown -R guilddesk:guilddesk /srv/guilddesk
+    && uv sync --frozen --no-dev --package guilddesk-platform --no-install-project
+
+COPY --chown=guilddesk:guilddesk services/platform/app ./services/platform/app
+COPY --chown=guilddesk:guilddesk services/platform/alembic ./services/platform/alembic
+COPY --chown=guilddesk:guilddesk services/platform/alembic.ini ./services/platform/alembic.ini
 
 ENV PATH="/srv/guilddesk/.venv/bin:${PATH}"
 

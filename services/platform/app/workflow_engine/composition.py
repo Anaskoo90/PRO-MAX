@@ -71,8 +71,8 @@ class WorkflowEngineModule:
         tasks_module: TasksModule, boards_module: BoardsModule,
     ) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
         self.notification_dispatcher = identity_module.notification_dispatcher
@@ -146,6 +146,9 @@ class WorkflowEngineModule:
         container.register_instance(WorkflowTransitionService, self.transition_service)
         container.register_instance(WorkflowExecutionService, self.execution_service)
         container.register_instance(WorkflowAutomationService, self.automation_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(workflows_router.router)

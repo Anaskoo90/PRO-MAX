@@ -63,8 +63,8 @@ class TasksModule:
 
     def __init__(self, settings: PlatformSettings, identity_module: IdentityModule, projects_module: ProjectsModule) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
         self.notification_dispatcher = identity_module.notification_dispatcher
@@ -150,6 +150,9 @@ class TasksModule:
         container.register_instance(TaskRelationshipService, self.task_relationship_service)
         container.register_instance(TaskOrderingService, self.task_ordering_service)
         container.register_instance(WorkflowService, self.workflow_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(tasks_router.router)

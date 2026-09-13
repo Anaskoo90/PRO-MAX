@@ -40,8 +40,8 @@ class ProjectsModule:
 
     def __init__(self, settings: PlatformSettings, identity_module: IdentityModule) -> None:
         self._settings = settings
-        engine = create_async_engine(str(settings.database_url))
-        self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        self._engine = create_async_engine(str(settings.database_url))
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
         self.notification_dispatcher = identity_module.notification_dispatcher
@@ -82,6 +82,9 @@ class ProjectsModule:
         container.register_instance(ProjectService, self.project_service)
         container.register_instance(ProjectMembershipService, self.project_membership_service)
         container.register_instance(ProjectTemplateService, self.project_template_service)
+
+    async def shutdown(self) -> None:
+        await self._engine.dispose()
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(workspaces_router.router)
