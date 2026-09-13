@@ -24,6 +24,8 @@ from app.platform_core.errors.handlers import register_exception_handlers
 from app.platform_core.logging.correlation import CorrelationIdMiddleware
 from app.platform_core.logging.logger import configure_logging, get_logger
 from app.platform_core.logging.request_logging import RequestLoggingMiddleware
+from app.platform_core.messaging.bus import MessageBus
+from app.platform_core.messaging.runtime import MessagingRuntime
 from app.platform_core.observability.health import (
     DependencyCheckResult,
     HealthCheckRegistry,
@@ -37,6 +39,8 @@ logger = get_logger("app.main")
 container = ServiceContainer()
 lifecycle = LifecycleManager()
 health_registry = HealthCheckRegistry()
+messaging_runtime = MessagingRuntime(settings)
+health_registry.register(messaging_runtime.health_check)
 
 from app.ai_gateway.composition import AI_PERMISSION_CATALOG, AiGatewayModule  # noqa: E402
 from app.boards.composition import BOARDS_PERMISSION_CATALOG, BoardsModule  # noqa: E402
@@ -99,6 +103,7 @@ async def _db_engine():
 async def lifespan(app: FastAPI):
     lifecycle.register(_db_engine)
     await lifecycle.startup()
+    await messaging_runtime.start()
     await identity_module.seed(
         extra_permissions=(
             *PROJECTS_PERMISSION_CATALOG, *TASKS_PERMISSION_CATALOG, *BOARDS_PERMISSION_CATALOG,
@@ -113,6 +118,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await messaging_runtime.stop()
         await workflow_engine_module.job_scheduler.stop()
         await boards_module.job_scheduler.stop()
         await tasks_module.job_scheduler.stop()
@@ -145,6 +151,8 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
     register_exception_handlers(app)
+
+    container.register_instance(MessageBus, messaging_runtime.message_bus)
 
     identity_module.register(container)
     identity_module.mount(app)

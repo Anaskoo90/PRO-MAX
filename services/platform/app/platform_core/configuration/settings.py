@@ -57,6 +57,10 @@ class PlatformSettings(BaseSettings):
     database_url: PostgresDsn
     redis_url: RedisDsn
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbitmq_exchange: str = "guilddesk.events"
+    rabbitmq_connection_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    outbox_relay_interval_seconds: float = Field(default=1.0, gt=0, le=300)
+    outbox_relay_batch_size: int = Field(default=100, ge=1, le=1000)
 
     api_version: str = "v1"
     cors_allowed_origins: list[str] = Field(default_factory=list)
