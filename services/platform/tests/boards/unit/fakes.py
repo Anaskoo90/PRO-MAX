@@ -163,8 +163,11 @@ class FakeBoardsAuditLogRepository:
 
 
 class FakeOutboxWriter:
+    def __init__(self) -> None:
+        self.events: list = []
+
     async def append(self, event) -> None:
-        pass
+        self.events.append(event)
 
 
 class FakeBoardsUnitOfWork:

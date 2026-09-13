@@ -14,7 +14,8 @@ the task's status.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
+from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardCardDTO
 from app.boards.application.ports import OrgPermissionCheckerPort, ProjectContextPort, TaskStatusRejectedError, TasksContextPort
@@ -25,6 +26,7 @@ from app.boards.domain.exceptions import (
     BoardCardNotFoundError,
     BoardNotFoundError,
     ColumnNotFoundError,
+    SwimlaneNotFoundError,
     TaskAlreadyOnBoardError,
     TaskNotAccessibleError,
     WipLimitExceededError,
@@ -67,7 +69,7 @@ class CardMovementService:
                 raise TaskAlreadyOnBoardError()
 
             if column_id is not None:
-                await self._assert_wip_limit_not_exceeded(uow, column_id)
+                await self._assert_wip_limit_not_exceeded(uow, column_id, board_id=board.id)
                 existing_cards = await uow.board_cards.list_for_column(column_id)
                 position = compute_position_between(existing_cards[-1].position if existing_cards else None, None)
             else:
@@ -83,8 +85,10 @@ class CardMovementService:
                     metadata={"task_id": str(task_id)},
                 )
             )
+            event = TaskAddedToBoard(aggregate_id=card.id, board_id=board_id, task_id=task_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TaskAddedToBoard(aggregate_id=card.id, board_id=board_id, task_id=task_id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(card)
 
     async def remove_task_from_board(self, *, card_id: EntityId, actor_user_id: UserId) -> None:
@@ -93,20 +97,27 @@ class CardMovementService:
             if card is None:
                 raise BoardCardNotFoundError(card_id)
             board = await uow.boards.get_by_id(card.board_id)
+            if board is None:
+                raise BoardNotFoundError(card.board_id)
             await self._authorization.assert_can_move_tasks(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             await uow.board_cards.delete(card_id)
+            event = TaskRemovedFromBoard(aggregate_id=card.id, board_id=board.id, task_id=card.task_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TaskRemovedFromBoard(aggregate_id=card.id, board_id=board.id, task_id=card.task_id))
+            await self._dispatcher.dispatch(event)
 
-    async def _assert_wip_limit_not_exceeded(self, uow, column_id: EntityId) -> None:
+    async def _assert_wip_limit_not_exceeded(
+        self, uow, column_id: EntityId, *, board_id: EntityId
+    ):
         column = await uow.board_columns.get_by_id(column_id)
-        if column is None:
+        if column is None or column.board_id != board_id:
             raise ColumnNotFoundError(column_id)
         if column.wip_limit is not None:
             current_count = await uow.board_cards.count_for_column(column_id)
             if current_count >= column.wip_limit:
                 raise WipLimitExceededError(column.name, column.wip_limit, current_count)
+        return column
 
     async def move_task_to_column(
         self, *, card_id: EntityId, actor_user_id: UserId, column_id: EntityId | None,
@@ -118,31 +129,48 @@ class CardMovementService:
             if card is None:
                 raise BoardCardNotFoundError(card_id)
             board = await uow.boards.get_by_id(card.board_id)
+            if board is None:
+                raise BoardNotFoundError(card.board_id)
             await self._authorization.assert_can_move_tasks(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             from_column_id = card.column_id
             target_column = None
             if column_id is not None and column_id != from_column_id:
-                await self._assert_wip_limit_not_exceeded(uow, column_id)
-                target_column = await uow.board_columns.get_by_id(column_id)
+                target_column = await self._assert_wip_limit_not_exceeded(
+                    uow, column_id, board_id=board.id
+                )
+            if swimlane_id is not None:
+                swimlane = await uow.swimlanes.get_by_id(swimlane_id)
+                if swimlane is None or swimlane.board_id != board.id:
+                    raise SwimlaneNotFoundError(swimlane_id)
 
             previous_position = None
             if previous_card_id is not None:
                 previous_card = await uow.board_cards.get_by_id(previous_card_id)
-                previous_position = previous_card.position if previous_card else None
+                if previous_card is None or previous_card.board_id != board.id:
+                    raise BoardCardNotFoundError(previous_card_id)
+                previous_position = previous_card.position
             next_position = None
             if next_card_id is not None:
                 next_card = await uow.board_cards.get_by_id(next_card_id)
-                next_position = next_card.position if next_card else None
+                if next_card is None or next_card.board_id != board.id:
+                    raise BoardCardNotFoundError(next_card_id)
+                next_position = next_card.position
 
             new_position = compute_position_between(previous_position, next_position)
             card.move_to_column(column_id=column_id, position=new_position, swimlane_id=swimlane_id)
             await uow.board_cards.update(card)
+            event = TaskMoved(
+                aggregate_id=card.id,
+                board_id=board.id,
+                task_id=card.task_id,
+                from_column_id=from_column_id,
+                to_column_id=column_id,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
 
-            await self._dispatcher.dispatch(
-                TaskMoved(aggregate_id=card.id, board_id=board.id, task_id=card.task_id, from_column_id=from_column_id, to_column_id=column_id)
-            )
+            await self._dispatcher.dispatch(event)
 
         # Status sync happens after the board-side transaction commits,
         # via Tasks' own TaskLifecycleService (which enforces that
@@ -167,16 +195,30 @@ class CardMovementService:
             if card is None:
                 raise BoardCardNotFoundError(card_id)
             board = await uow.boards.get_by_id(card.board_id)
+            if board is None:
+                raise BoardNotFoundError(card.board_id)
             await self._authorization.assert_can_move_tasks(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             previous_position = None
             if previous_card_id is not None:
                 previous_card = await uow.board_cards.get_by_id(previous_card_id)
-                previous_position = previous_card.position if previous_card else None
+                if (
+                    previous_card is None
+                    or previous_card.board_id != board.id
+                    or previous_card.column_id != card.column_id
+                ):
+                    raise BoardCardNotFoundError(previous_card_id)
+                previous_position = previous_card.position
             next_position = None
             if next_card_id is not None:
                 next_card = await uow.board_cards.get_by_id(next_card_id)
-                next_position = next_card.position if next_card else None
+                if (
+                    next_card is None
+                    or next_card.board_id != board.id
+                    or next_card.column_id != card.column_id
+                ):
+                    raise BoardCardNotFoundError(next_card_id)
+                next_position = next_card.position
 
             card.move_to_column(column_id=card.column_id, position=compute_position_between(previous_position, next_position))
             await uow.board_cards.update(card)

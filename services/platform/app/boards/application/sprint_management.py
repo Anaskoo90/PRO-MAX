@@ -6,12 +6,13 @@ from __future__ import annotations
 from datetime import date
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import SprintDTO
 from app.boards.application.ports import OrgPermissionCheckerPort, ProjectContextPort, TasksContextPort
 from app.boards.domain.audit import BoardsAuditEventCategory, BoardsAuditLogRecord
-from app.boards.domain.entities import Sprint
+from app.boards.domain.entities import Board, Sprint
 from app.boards.domain.exceptions import BoardNotFoundError, OnlyOneActiveSprintPerBoardError, SprintNotFoundError
 
 
@@ -51,6 +52,7 @@ class SprintService:
                     actor_user_id=actor_user_id, resource_type="sprint", resource_id=str(sprint.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(sprint)
@@ -72,15 +74,18 @@ class SprintService:
         start_date: date | None = None, end_date: date | None = None, capacity: float | None = None,
     ) -> SprintDTO:
         async with self._uow_factory() as uow:
-            sprint = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
+            sprint, board = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
             sprint.update(name=name, goal=goal, start_date=start_date, end_date=end_date, capacity=capacity)
             await uow.sprints.update(sprint)
             events = sprint.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(sprint)
 
-    async def _load_and_authorize(self, uow, *, sprint_id: EntityId, actor_user_id: UserId) -> Sprint:
+    async def _load_and_authorize(
+        self, uow, *, sprint_id: EntityId, actor_user_id: UserId
+    ) -> tuple[Sprint, Board]:
         sprint = await uow.sprints.get_by_id(sprint_id)
         if sprint is None:
             raise SprintNotFoundError(sprint_id)
@@ -88,11 +93,11 @@ class SprintService:
         if board is None:
             raise BoardNotFoundError(sprint.board_id)
         await self._authorization.assert_can_manage_sprint(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
-        return sprint
+        return sprint, board
 
     async def start_sprint(self, *, sprint_id: EntityId, actor_user_id: UserId) -> SprintDTO:
         async with self._uow_factory() as uow:
-            sprint = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
+            sprint, board = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
             active = await uow.sprints.get_active_for_board(sprint.board_id)
             if active is not None and active.id != sprint.id:
                 raise OnlyOneActiveSprintPerBoardError()
@@ -100,26 +105,29 @@ class SprintService:
             sprint.start()
             await uow.sprints.update(sprint)
             events = sprint.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(sprint)
 
     async def complete_sprint(self, *, sprint_id: EntityId, actor_user_id: UserId) -> SprintDTO:
         async with self._uow_factory() as uow:
-            sprint = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
+            sprint, board = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
             sprint.complete()
             await uow.sprints.update(sprint)
             events = sprint.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(sprint)
 
     async def cancel_sprint(self, *, sprint_id: EntityId, actor_user_id: UserId) -> SprintDTO:
         async with self._uow_factory() as uow:
-            sprint = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
+            sprint, board = await self._load_and_authorize(uow, sprint_id=sprint_id, actor_user_id=actor_user_id)
             sprint.cancel()
             await uow.sprints.update(sprint)
             events = sprint.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(sprint)

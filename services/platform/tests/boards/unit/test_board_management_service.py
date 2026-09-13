@@ -39,6 +39,8 @@ async def test_create_board_succeeds_for_a_project_member(context) -> None:
     assert board.name == "Sprint Board"
     assert board.board_type == "kanban"
     assert board.status == "active"
+    assert [event.payload["event_type"] for event in uow.outbox.events] == ["boards.board_created"]
+    assert {event.org_id for event in uow.outbox.events} == {org_id}
 
 
 @pytest.mark.asyncio

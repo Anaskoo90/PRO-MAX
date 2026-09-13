@@ -4,7 +4,14 @@ from app.boards.application.board_management import BoardService
 from app.boards.application.card_movement import CardMovementService
 from app.boards.application.column_management import ColumnService
 from app.boards.application.ports import ProjectMemberSummary, ProjectSummary, TaskStatusRejectedError, TaskSummary
-from app.boards.domain.exceptions import TaskAlreadyOnBoardError, TaskNotAccessibleError, WipLimitExceededError
+from app.boards.domain.entities import Board, BoardColumn, Swimlane
+from app.boards.domain.exceptions import (
+    ColumnNotFoundError,
+    SwimlaneNotFoundError,
+    TaskAlreadyOnBoardError,
+    TaskNotAccessibleError,
+    WipLimitExceededError,
+)
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -64,6 +71,71 @@ async def test_adding_a_task_from_another_project_is_rejected(context) -> None:
 
     with pytest.raises(TaskNotAccessibleError):
         await card_service.add_task_to_board(board_id=board.id, actor_user_id=actor_id, task_id=foreign_task_id)
+
+
+@pytest.mark.asyncio
+async def test_add_task_rejects_cross_tenant_target_column(context) -> None:
+    uow, board_service, _column_service, card_service, _tc, project_id, org_id, actor_id, task_id = context
+    board = await board_service.create_board(
+        project_id=project_id, org_id=org_id, actor_user_id=actor_id, name="Demo"
+    )
+    foreign_board = Board.create(
+        project_id=EntityId(new_uuid7()),
+        org_id=OrgId(new_uuid7()),
+        name="Foreign",
+    )
+    foreign_board.pull_domain_events()
+    await uow.boards.add(foreign_board)
+    foreign_column = BoardColumn.create(
+        board_id=foreign_board.id,
+        name="Foreign column",
+        position=1.0,
+    )
+    await uow.board_columns.add(foreign_column)
+
+    with pytest.raises(ColumnNotFoundError):
+        await card_service.add_task_to_board(
+            board_id=board.id,
+            actor_user_id=actor_id,
+            task_id=task_id,
+            column_id=foreign_column.id,
+        )
+
+    assert await uow.board_cards.get_by_task(board.id, task_id) is None
+
+
+@pytest.mark.asyncio
+async def test_move_task_rejects_cross_tenant_target_swimlane(context) -> None:
+    uow, board_service, _column_service, card_service, _tc, project_id, org_id, actor_id, task_id = context
+    board = await board_service.create_board(
+        project_id=project_id, org_id=org_id, actor_user_id=actor_id, name="Demo"
+    )
+    card = await card_service.add_task_to_board(
+        board_id=board.id, actor_user_id=actor_id, task_id=task_id
+    )
+    foreign_board = Board.create(
+        project_id=EntityId(new_uuid7()),
+        org_id=OrgId(new_uuid7()),
+        name="Foreign",
+    )
+    foreign_board.pull_domain_events()
+    await uow.boards.add(foreign_board)
+    foreign_swimlane = Swimlane.create(
+        board_id=foreign_board.id,
+        name="Foreign swimlane",
+        position=1.0,
+    )
+    await uow.swimlanes.add(foreign_swimlane)
+
+    with pytest.raises(SwimlaneNotFoundError):
+        await card_service.move_task_to_column(
+            card_id=card.id,
+            actor_user_id=actor_id,
+            column_id=None,
+            swimlane_id=foreign_swimlane.id,
+        )
+
+    assert (await uow.board_cards.get_by_id(card.id)).swimlane_id is None
 
 
 @pytest.mark.asyncio

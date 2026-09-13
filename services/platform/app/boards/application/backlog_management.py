@@ -16,13 +16,14 @@ unplaced (column_id NULL) until work actually starts on it.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardCardDTO
 from app.boards.application.ports import OrgPermissionCheckerPort, ProjectContextPort
 from app.boards.domain.entities import BoardCard
 from app.boards.domain.events import TaskAssignedToSprint, TaskRemovedFromSprint
-from app.boards.domain.exceptions import BoardCardNotFoundError, BoardNotFoundError, SprintNotFoundError
+from app.boards.domain.exceptions import BoardCardNotFoundError, SprintNotFoundError
 
 
 def _to_dto(card: BoardCard) -> BoardCardDTO:
@@ -84,8 +85,10 @@ class BacklogService:
 
             card.assign_to_sprint(sprint_id)
             await uow.board_cards.update(card)
+            event = TaskAssignedToSprint(aggregate_id=card.id, sprint_id=sprint_id, task_id=card.task_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TaskAssignedToSprint(aggregate_id=card.id, sprint_id=sprint_id, task_id=card.task_id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(card)
 
     async def remove_from_sprint(self, *, card_id: EntityId, actor_user_id: UserId) -> BoardCardDTO:
@@ -99,7 +102,11 @@ class BacklogService:
             sprint_id = card.sprint_id
             card.remove_from_sprint()
             await uow.board_cards.update(card)
-            await uow.commit()
+            event = None
             if sprint_id is not None:
-                await self._dispatcher.dispatch(TaskRemovedFromSprint(aggregate_id=card.id, sprint_id=sprint_id, task_id=card.task_id))
+                event = TaskRemovedFromSprint(aggregate_id=card.id, sprint_id=sprint_id, task_id=card.task_id)
+                await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
+            await uow.commit()
+            if event is not None:
+                await self._dispatcher.dispatch(event)
             return _to_dto(card)

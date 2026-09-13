@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardDTO
@@ -57,6 +58,7 @@ class BoardService:
                     actor_user_id=actor_user_id, resource_type="board", resource_id=str(board.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -158,6 +160,7 @@ class BoardService:
             board.update(name=name, description=description)
             await uow.boards.update(board)
             events = board.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -168,6 +171,7 @@ class BoardService:
             board.update_settings(patch)
             await uow.boards.update(board)
             events = board.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -178,6 +182,7 @@ class BoardService:
             board.change_swimlane_strategy(strategy)
             await uow.boards.update(board)
             events = board.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -194,6 +199,7 @@ class BoardService:
                     actor_user_id=actor_user_id, resource_type="board", resource_id=str(board.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -204,6 +210,7 @@ class BoardService:
             board.restore()
             await uow.boards.update(board)
             events = board.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(board)
@@ -222,5 +229,6 @@ class BoardService:
                     actor_user_id=actor_user_id, resource_type="board", resource_id=str(board.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=board.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

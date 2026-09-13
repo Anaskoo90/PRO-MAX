@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import SwimlaneDTO, SwimlaneGroupDTO
@@ -56,8 +57,10 @@ class SwimlaneService:
             position = compute_position_between(existing[-1].position if existing else None, None)
             swimlane = Swimlane.create(board_id=board_id, name=name, position=position)
             await uow.swimlanes.add(swimlane)
+            event = SwimlaneCreated(aggregate_id=swimlane.id, board_id=board_id, name=name)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(SwimlaneCreated(aggregate_id=swimlane.id, board_id=board_id, name=name))
+            await self._dispatcher.dispatch(event)
             return _to_dto(swimlane)
 
     async def list_for_board(self, *, board_id: EntityId) -> list[SwimlaneDTO]:
@@ -71,12 +74,16 @@ class SwimlaneService:
             if swimlane is None:
                 raise SwimlaneNotFoundError(swimlane_id)
             board = await uow.boards.get_by_id(swimlane.board_id)
+            if board is None:
+                raise BoardNotFoundError(swimlane.board_id)
             await self._authorization.assert_can_manage(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             swimlane.rename(name)
             await uow.swimlanes.update(swimlane)
+            event = SwimlaneUpdated(aggregate_id=swimlane.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(SwimlaneUpdated(aggregate_id=swimlane.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(swimlane)
 
     async def reorder_swimlane(
@@ -88,20 +95,29 @@ class SwimlaneService:
             if swimlane is None:
                 raise SwimlaneNotFoundError(swimlane_id)
             board = await uow.boards.get_by_id(swimlane.board_id)
+            if board is None:
+                raise BoardNotFoundError(swimlane.board_id)
             await self._authorization.assert_can_manage(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             previous_position = None
             if previous_swimlane_id is not None:
                 previous = await uow.swimlanes.get_by_id(previous_swimlane_id)
-                previous_position = previous.position if previous else None
+                if previous is None or previous.board_id != swimlane.board_id:
+                    raise SwimlaneNotFoundError(previous_swimlane_id)
+                previous_position = previous.position
             next_position = None
             if next_swimlane_id is not None:
                 nxt = await uow.swimlanes.get_by_id(next_swimlane_id)
-                next_position = nxt.position if nxt else None
+                if nxt is None or nxt.board_id != swimlane.board_id:
+                    raise SwimlaneNotFoundError(next_swimlane_id)
+                next_position = nxt.position
 
             swimlane.set_position(compute_position_between(previous_position, next_position))
             await uow.swimlanes.update(swimlane)
+            event = SwimlaneUpdated(aggregate_id=swimlane.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
+            await self._dispatcher.dispatch(event)
             return _to_dto(swimlane)
 
     async def delete_swimlane(self, *, swimlane_id: EntityId, actor_user_id: UserId) -> None:
@@ -110,11 +126,15 @@ class SwimlaneService:
             if swimlane is None:
                 raise SwimlaneNotFoundError(swimlane_id)
             board = await uow.boards.get_by_id(swimlane.board_id)
+            if board is None:
+                raise BoardNotFoundError(swimlane.board_id)
             await self._authorization.assert_can_manage(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
 
             await uow.swimlanes.delete(swimlane_id)
+            event = SwimlaneDeleted(aggregate_id=swimlane_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(SwimlaneDeleted(aggregate_id=swimlane_id))
+            await self._dispatcher.dispatch(event)
 
     async def compute_dynamic_groups(self, *, board_id: EntityId) -> list[SwimlaneGroupDTO]:
         """For ASSIGNEE/PRIORITY/LABEL/PROJECT/EPIC strategies — computed

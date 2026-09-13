@@ -5,6 +5,7 @@ was never scoped to hold estimation data for)."""
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardCardDTO
@@ -47,6 +48,8 @@ class EstimateService:
 
             card.set_estimate(estimate_type=estimate_type, value=value, custom_label=custom_label)
             await uow.board_cards.update(card)
+            event = TaskEstimateSet(aggregate_id=card.id, estimate_type=estimate_type.value)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(TaskEstimateSet(aggregate_id=card.id, estimate_type=estimate_type.value))
+            await self._dispatcher.dispatch(event)
             return _to_dto(card)

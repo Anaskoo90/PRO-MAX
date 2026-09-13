@@ -7,12 +7,13 @@ import re
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.boards.application.authorization_helpers import BoardAuthorization
 from app.boards.application.dtos import BoardColumnDTO
 from app.boards.application.ports import OrgPermissionCheckerPort, ProjectContextPort
 from app.boards.domain.audit import BoardsAuditEventCategory, BoardsAuditLogRecord
-from app.boards.domain.entities import BoardColumn, compute_position_between
+from app.boards.domain.entities import Board, BoardColumn, compute_position_between
 from app.boards.domain.events import ColumnCreated, ColumnDeleted, ColumnReordered, ColumnUpdated
 from app.boards.domain.exceptions import (
     BoardNotFoundError,
@@ -70,8 +71,10 @@ class ColumnService:
                     actor_user_id=actor_user_id, resource_type="column", resource_id=str(column.id),
                 )
             )
+            event = ColumnCreated(aggregate_id=column.id, board_id=board_id, name=name)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnCreated(aggregate_id=column.id, board_id=board_id, name=name))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def list_for_board(self, *, board_id: EntityId) -> list[BoardColumnDTO]:
@@ -83,7 +86,9 @@ class ColumnService:
                 result.append(_to_dto(column, card_count=count))
             return result
 
-    async def _load_column_and_authorize(self, uow, *, column_id: EntityId, actor_user_id: UserId) -> BoardColumn:
+    async def _load_column_and_authorize(
+        self, uow, *, column_id: EntityId, actor_user_id: UserId
+    ) -> tuple[BoardColumn, Board]:
         column = await uow.board_columns.get_by_id(column_id)
         if column is None:
             raise ColumnNotFoundError(column_id)
@@ -91,54 +96,64 @@ class ColumnService:
         if board is None:
             raise BoardNotFoundError(column.board_id)
         await self._authorization.assert_can_manage(project_id=board.project_id, org_id=board.org_id, user_id=actor_user_id)
-        return column
+        return column, board
 
     async def rename_column(self, *, column_id: EntityId, actor_user_id: UserId, name: str) -> BoardColumnDTO:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
             if await uow.board_columns.get_by_name(column.board_id, name) is not None:
                 raise ColumnNameAlreadyExistsError(name)
             column.rename(name)
             await uow.board_columns.update(column)
+            event = ColumnUpdated(aggregate_id=column.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnUpdated(aggregate_id=column.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def set_wip_limit(self, *, column_id: EntityId, actor_user_id: UserId, wip_limit: int | None) -> BoardColumnDTO:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
             column.set_wip_limit(wip_limit)
             await uow.board_columns.update(column)
+            event = ColumnUpdated(aggregate_id=column.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnUpdated(aggregate_id=column.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def set_color(self, *, column_id: EntityId, actor_user_id: UserId, color: str) -> BoardColumnDTO:
         _validate_color(color)
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
             column.set_color(color)
             await uow.board_columns.update(column)
+            event = ColumnUpdated(aggregate_id=column.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnUpdated(aggregate_id=column.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def set_policies(self, *, column_id: EntityId, actor_user_id: UserId, policies: dict[str, Any]) -> BoardColumnDTO:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
             column.set_policies(policies)
             await uow.board_columns.update(column)
+            event = ColumnUpdated(aggregate_id=column.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnUpdated(aggregate_id=column.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def set_mapped_task_status(self, *, column_id: EntityId, actor_user_id: UserId, status: str | None) -> BoardColumnDTO:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
             column.set_mapped_task_status(status)
             await uow.board_columns.update(column)
+            event = ColumnUpdated(aggregate_id=column.id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnUpdated(aggregate_id=column.id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def reorder_column(
@@ -146,27 +161,32 @@ class ColumnService:
         next_column_id: EntityId | None,
     ) -> BoardColumnDTO:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
 
             previous_position = None
             if previous_column_id is not None:
                 previous_column = await uow.board_columns.get_by_id(previous_column_id)
-                previous_position = previous_column.position if previous_column else None
+                if previous_column is None or previous_column.board_id != column.board_id:
+                    raise ColumnNotFoundError(previous_column_id)
+                previous_position = previous_column.position
             next_position = None
             if next_column_id is not None:
                 next_column = await uow.board_columns.get_by_id(next_column_id)
-                next_position = next_column.position if next_column else None
+                if next_column is None or next_column.board_id != column.board_id:
+                    raise ColumnNotFoundError(next_column_id)
+                next_position = next_column.position
 
             column.set_position(compute_position_between(previous_position, next_position))
             await uow.board_columns.update(column)
+            event = ColumnReordered(aggregate_id=column.id, position=column.position)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnReordered(aggregate_id=column.id, position=column.position))
+            await self._dispatcher.dispatch(event)
             return _to_dto(column)
 
     async def delete_column(self, *, column_id: EntityId, actor_user_id: UserId) -> None:
         async with self._uow_factory() as uow:
-            column = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
-            board = await uow.boards.get_by_id(column.board_id)
+            column, board = await self._load_column_and_authorize(uow, column_id=column_id, actor_user_id=actor_user_id)
 
             cards = await uow.board_cards.list_for_column(column_id)
             for card in cards:
@@ -180,5 +200,7 @@ class ColumnService:
                     actor_user_id=actor_user_id, resource_type="column", resource_id=str(column_id),
                 )
             )
+            event = ColumnDeleted(aggregate_id=column_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=board.org_id)
             await uow.commit()
-            await self._dispatcher.dispatch(ColumnDeleted(aggregate_id=column_id))
+            await self._dispatcher.dispatch(event)
