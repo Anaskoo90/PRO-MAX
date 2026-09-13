@@ -166,11 +166,12 @@ services:
       context: ../..
       dockerfile: discord_bot/Dockerfile
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-0}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-0}
-      API_URL: http://api:8000
-      PLATFORM_SERVICE_SECRET: dev-only-change-me
+      API_URL: ${API_URL:-http://api:8000}
+      PLATFORM_SERVICE_SECRET: ${GUILDDESK_SECRET_DISCORD_BOT_SERVICE_SECRET:-dev-only-change-me}
     depends_on:
       api:
         condition: service_healthy
