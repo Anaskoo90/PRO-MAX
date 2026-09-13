@@ -21,9 +21,12 @@ from __future__ import annotations
 import secrets
 from datetime import timedelta
 
-from app.discord_integration.application.dtos import GuildLinkDTO, GuildLinkStatusDTO, SetupTokenDTO
 from app.discord_integration.application.authorization_helpers import DiscordAuthorization
-from app.discord_integration.application.ports import OrganizationLookupPort, OrgPermissionCheckerPort
+from app.discord_integration.application.dtos import GuildLinkDTO, GuildLinkStatusDTO, SetupTokenDTO
+from app.discord_integration.application.ports import (
+    OrganizationLookupPort,
+    OrgPermissionCheckerPort,
+)
 from app.discord_integration.domain.audit import DiscordAuditEventCategory, DiscordAuditLogRecord
 from app.discord_integration.domain.entities import GuildLink, GuildSetupToken
 from app.discord_integration.domain.exceptions import (
@@ -37,8 +40,6 @@ from app.discord_integration.domain.exceptions import (
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.security.hashing import hash_for_lookup
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
-
-_TOKEN_PEPPER = "change-me-in-production"  # see platform_core.security.secrets_provider
 
 # Crockford-style alphabet minus ambiguous characters (0/O, 1/I/L) — typed
 # by hand into a Discord slash-command argument, so legibility matters more
@@ -71,6 +72,7 @@ class DiscordSetupService:
         permission_checker: OrgPermissionCheckerPort,
         organization_lookup: OrganizationLookupPort,
         discord_application_id: str,
+        token_pepper: str,
         setup_token_ttl: timedelta = timedelta(minutes=15),
     ) -> None:
         self._uow_factory = uow_factory
@@ -78,6 +80,7 @@ class DiscordSetupService:
         self._authorization = DiscordAuthorization(permission_checker=permission_checker)
         self._organization_lookup = organization_lookup
         self._discord_application_id = discord_application_id
+        self._token_pepper = token_pepper
         self._setup_token_ttl = setup_token_ttl
 
     def _build_invite_url(self) -> str:
@@ -92,7 +95,7 @@ class DiscordSetupService:
         await self._authorization.assert_can_manage_integration(org_id=org_id, user_id=requested_by_user_id)
 
         raw_code = _generate_setup_code()
-        token_hash = hash_for_lookup(raw_code, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_code, secret_pepper=self._token_pepper)
 
         async with self._uow_factory() as uow:
             # Superseding any outstanding request rather than allowing many
@@ -118,7 +121,7 @@ class DiscordSetupService:
     async def complete_setup(
         self, *, raw_code: str, discord_guild_id: str, discord_guild_name: str, discord_user_id: str
     ) -> GuildLinkDTO:
-        token_hash = hash_for_lookup(raw_code, secret_pepper=_TOKEN_PEPPER)
+        token_hash = hash_for_lookup(raw_code, secret_pepper=self._token_pepper)
 
         async with self._uow_factory() as uow:
             token = await uow.guild_setup_tokens.get_by_token_hash(token_hash)

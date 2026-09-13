@@ -19,15 +19,17 @@ from __future__ import annotations
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.identity.composition import IdentityModule
-from app.platform_core.di.container import ServiceContainer
-from app.platform_core.events.dispatcher import EventDispatcher
 from app.discord_integration.application.discord_setup import DiscordSetupService
-from app.discord_integration.infrastructure.identity_adapter import IdentityOrganizationLookupAdapter
+from app.discord_integration.infrastructure.identity_adapter import (
+    IdentityOrganizationLookupAdapter,
+)
 from app.discord_integration.infrastructure.seed_data import DISCORD_PERMISSION_CATALOG
 from app.discord_integration.infrastructure.unit_of_work import DiscordIntegrationUnitOfWork
 from app.discord_integration.presentation import bot_router, deps, setup_router
 from app.discord_integration.settings import DiscordIntegrationSettings
+from app.identity.composition import IdentityModule
+from app.platform_core.di.container import ServiceContainer
+from app.platform_core.events.dispatcher import EventDispatcher
 
 
 class DiscordIntegrationModule:
@@ -52,6 +54,7 @@ class DiscordIntegrationModule:
         self.discord_setup_service = DiscordSetupService(
             uow_factory=uow_factory, dispatcher=self.dispatcher, permission_checker=permission_checker,
             organization_lookup=organization_lookup, discord_application_id=settings.discord_application_id,
+            token_pepper=settings.token_hash_pepper.get_secret_value(),
         )
 
     def register(self, container: ServiceContainer) -> None:
@@ -62,7 +65,9 @@ class DiscordIntegrationModule:
         app.include_router(bot_router.router)
 
         app.dependency_overrides[deps.get_discord_setup_service] = lambda: self.discord_setup_service
-        app.dependency_overrides[deps.get_bot_service_secret] = lambda: self._settings.discord_bot_service_secret
+        app.dependency_overrides[deps.get_bot_service_secret] = (
+            lambda: self._settings.discord_bot_service_secret.get_secret_value()
+        )
 
 
 __all__ = ["DiscordIntegrationModule", "DISCORD_PERMISSION_CATALOG"]

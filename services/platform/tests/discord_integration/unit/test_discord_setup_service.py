@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 import pytest
-
 from app.discord_integration.application.discord_setup import DiscordSetupService
 from app.discord_integration.domain.exceptions import (
     GuildAlreadyLinkedToAnotherOrganizationError,
@@ -15,6 +14,7 @@ from app.discord_integration.domain.exceptions import (
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7, utcnow
+
 from tests.discord_integration.unit.fakes import (
     AllowAllPermissionChecker,
     DenyAllPermissionChecker,
@@ -25,13 +25,19 @@ from tests.discord_integration.unit.fakes import (
 pytestmark = pytest.mark.asyncio
 
 
-def _make_service(uow, permission_checker=None, organization_lookup=None) -> DiscordSetupService:
+def _make_service(
+    uow,
+    permission_checker=None,
+    organization_lookup=None,
+    token_pepper="test-discord-token-pepper-at-least-32-characters",
+) -> DiscordSetupService:
     return DiscordSetupService(
         uow_factory=lambda: uow,
         dispatcher=EventDispatcher(),
         permission_checker=permission_checker or AllowAllPermissionChecker(),
         organization_lookup=organization_lookup or FakeOrganizationLookup(),
         discord_application_id="123456",
+        token_pepper=token_pepper,
     )
 
 
@@ -92,6 +98,25 @@ async def test_complete_setup_rejects_an_unknown_code(context) -> None:
     with pytest.raises(InvalidSetupCodeError):
         await service.complete_setup(
             raw_code="does-not-exist", discord_guild_id="111", discord_guild_name="Acme HQ", discord_user_id="999",
+        )
+
+
+async def test_setup_code_hash_uses_the_configured_secret_pepper(context) -> None:
+    uow, org_id, actor_id = context
+    issuing_service = _make_service(uow)
+    token = await issuing_service.request_setup_token(
+        org_id=org_id, requested_by_user_id=actor_id
+    )
+    differently_configured_service = _make_service(
+        uow, token_pepper="different-discord-token-pepper-32-characters"
+    )
+
+    with pytest.raises(InvalidSetupCodeError):
+        await differently_configured_service.complete_setup(
+            raw_code=token.raw_code,
+            discord_guild_id="111",
+            discord_guild_name="Acme HQ",
+            discord_user_id="999",
         )
 
 
