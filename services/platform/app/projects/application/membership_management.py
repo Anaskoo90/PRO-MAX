@@ -13,6 +13,7 @@ exactly like Identity's email-verification/password-reset flows do.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.notifications.dispatcher import (
     NotificationChannel,
     NotificationDispatcher,
@@ -91,13 +92,21 @@ class ProjectMembershipService:
                     resource_id=str(project.id), metadata={"invited_user_id": str(target_user.id), "role": role.value},
                 )
             )
+            event = ProjectMemberInvited(
+                aggregate_id=project_id,
+                user_id=UserId(target_user.id),
+                role=role.value,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=project.org_id,
+            )
             await uow.commit()
             # ProjectMembership is a plain join entity (no EventRecordingMixin) —
             # events are constructed and dispatched here, same convention as
             # WorkspaceService.add_member/remove_member.
-            await self._dispatcher.dispatch(
-                ProjectMemberInvited(aggregate_id=project_id, user_id=UserId(target_user.id), role=role.value)
-            )
+            await self._dispatcher.dispatch(event)
 
         await self._notification_dispatcher.dispatch(
             NotificationRequest(
@@ -117,8 +126,17 @@ class ProjectMembershipService:
                 raise ProjectMembershipNotFoundError(project_id, user_id)
             membership.accept()
             await uow.project_memberships.update(membership)
+            project = await uow.projects.get_by_id(project_id)
+            if project is None:
+                raise ProjectNotFoundError(project_id)
+            event = ProjectMemberJoined(aggregate_id=project_id, user_id=user_id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=project.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(ProjectMemberJoined(aggregate_id=project_id, user_id=user_id))
+            await self._dispatcher.dispatch(event)
             return _to_dto(membership)
 
     async def remove_member(self, *, project_id: EntityId, actor_user_id: UserId, target_user_id: UserId) -> None:
@@ -145,8 +163,17 @@ class ProjectMembershipService:
                     resource_id=str(project.id), metadata={"removed_user_id": str(target_user_id)},
                 )
             )
+            event = ProjectMemberRemoved(
+                aggregate_id=project_id,
+                user_id=target_user_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=project.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(ProjectMemberRemoved(aggregate_id=project_id, user_id=target_user_id))
+            await self._dispatcher.dispatch(event)
 
     async def change_member_role(
         self, *, project_id: EntityId, actor_user_id: UserId, target_user_id: UserId, role: ProjectRole
@@ -175,10 +202,18 @@ class ProjectMembershipService:
                     resource_id=str(project.id), metadata={"target_user_id": str(target_user_id), "role": role.value},
                 )
             )
-            await uow.commit()
-            await self._dispatcher.dispatch(
-                ProjectMemberRoleChanged(aggregate_id=project_id, user_id=target_user_id, role=role.value)
+            event = ProjectMemberRoleChanged(
+                aggregate_id=project_id,
+                user_id=target_user_id,
+                role=role.value,
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=project.org_id,
+            )
+            await uow.commit()
+            await self._dispatcher.dispatch(event)
             return _to_dto(membership)
 
     async def list_members(self, *, project_id: EntityId) -> list[ProjectMembershipDTO]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.projects.application.authorization_helpers import WorkspaceAuthorization
 from app.projects.application.dtos import WorkspaceDTO, WorkspaceMembershipDTO
@@ -69,6 +70,11 @@ class WorkspaceService:
                     actor_user_id=actor_user_id, resource_type="workspace", resource_id=str(workspace.id),
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=workspace.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workspace)
@@ -115,6 +121,7 @@ class WorkspaceService:
                 workspace.update_description(description)
             await uow.workspaces.update(workspace)
             events = workspace.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workspace.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workspace)
@@ -130,6 +137,7 @@ class WorkspaceService:
             workspace.update_settings(patch)
             await uow.workspaces.update(workspace)
             events = workspace.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workspace.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workspace)
@@ -152,6 +160,7 @@ class WorkspaceService:
                     actor_user_id=actor_user_id, resource_type="workspace", resource_id=str(workspace.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=workspace.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workspace)
@@ -176,13 +185,21 @@ class WorkspaceService:
 
             membership = WorkspaceMembership.create(workspace_id=workspace_id, user_id=target_user_id, role=role)
             await uow.workspace_memberships.add(membership)
+            event = WorkspaceMemberAdded(
+                aggregate_id=workspace_id,
+                user_id=target_user_id,
+                role=role.value,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=workspace.org_id,
+            )
             await uow.commit()
             # WorkspaceMembership is a plain join entity (no EventRecordingMixin,
             # same convention as Identity's TeamMembership) — the event is
             # constructed and dispatched here at the application layer instead.
-            await self._dispatcher.dispatch(
-                WorkspaceMemberAdded(aggregate_id=workspace_id, user_id=target_user_id, role=role.value)
-            )
+            await self._dispatcher.dispatch(event)
             return _membership_to_dto(membership)
 
     async def remove_member(self, *, workspace_id: EntityId, actor_user_id: UserId, target_user_id: UserId) -> None:
@@ -197,8 +214,17 @@ class WorkspaceService:
             if membership is None:
                 raise WorkspaceMembershipNotFoundError(workspace_id, target_user_id)
             await uow.workspace_memberships.delete(membership.id)
+            event = WorkspaceMemberRemoved(
+                aggregate_id=workspace_id,
+                user_id=target_user_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=workspace.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(WorkspaceMemberRemoved(aggregate_id=workspace_id, user_id=target_user_id))
+            await self._dispatcher.dispatch(event)
 
     async def list_members(self, *, workspace_id: EntityId) -> list[WorkspaceMembershipDTO]:
         async with self._uow_factory() as uow:

@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.projects.application.authorization_helpers import ProjectAuthorization, WorkspaceAuthorization
 from app.projects.application.dtos import ProjectDTO
@@ -106,6 +107,11 @@ class ProjectService:
                     actor_user_id=actor_user_id, resource_type="project", resource_id=str(project.id),
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=project.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -178,6 +184,7 @@ class ProjectService:
             project.update(name=name, description=description)
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -188,6 +195,7 @@ class ProjectService:
             project.update_metadata(patch)
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -198,6 +206,7 @@ class ProjectService:
             project.update_settings(patch)
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -208,6 +217,7 @@ class ProjectService:
             project.change_status(status)
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -218,6 +228,7 @@ class ProjectService:
             project.change_visibility(visibility)
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -234,6 +245,7 @@ class ProjectService:
                     actor_user_id=actor_user_id, resource_type="project", resource_id=str(project.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -244,6 +256,7 @@ class ProjectService:
             project.unarchive()
             await uow.projects.update(project)
             events = project.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(project)
@@ -262,5 +275,6 @@ class ProjectService:
                     actor_user_id=actor_user_id, resource_type="project", resource_id=str(project.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=project.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

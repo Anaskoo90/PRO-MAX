@@ -76,6 +76,10 @@ async def test_create_project_creator_becomes_active_owner() -> None:
     assert membership is not None
     assert membership.role.value == "owner"
     assert membership.status.value == "active"
+    event_types = [event.payload["event_type"] for event in uow.outbox.events]
+    assert "projects.workspace_created" in event_types
+    assert "projects.project_created" in event_types
+    assert {event.org_id for event in uow.outbox.events} == {org_id}
 
 
 @pytest.mark.asyncio

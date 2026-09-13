@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.projects.application.dtos import ProjectTemplateDTO
 from app.projects.application.ports import OrgPermissionCheckerPort
@@ -63,6 +64,7 @@ class ProjectTemplateService:
                     actor_user_id=actor_user_id, resource_type="project_template", resource_id=str(template.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=template.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(template)
@@ -89,6 +91,7 @@ class ProjectTemplateService:
                     actor_user_id=actor_user_id, resource_type="project_template", resource_id=str(template.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=template.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(template)
@@ -125,6 +128,7 @@ class ProjectTemplateService:
             template.update(name=name, description=description)
             await uow.project_templates.update(template)
             events = template.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=template.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(template)
@@ -148,6 +152,7 @@ class ProjectTemplateService:
             template.mark_default()
             await uow.project_templates.update(template)
             events.extend(template.pull_domain_events())
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=template.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(template)
@@ -168,6 +173,7 @@ class ProjectTemplateService:
                     actor_user_id=actor_user_id, resource_type="project_template", resource_id=str(template.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=template.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
