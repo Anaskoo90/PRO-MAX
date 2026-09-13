@@ -1,5 +1,8 @@
 import pytest
-
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.notifications.dispatcher import NotificationDispatcher
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.projects.application.membership_management import ProjectMembershipService
 from app.projects.application.ports import UserSummary
 from app.projects.domain.entities import Project, ProjectMembership, ProjectRole
@@ -8,17 +11,16 @@ from app.projects.domain.exceptions import (
     ProjectMembershipAlreadyExistsError,
     UserNotInOrganizationError,
 )
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.notifications.dispatcher import NotificationDispatcher
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
-from tests.projects.unit.fakes import AllowAllPermissionChecker, FakeProjectsUnitOfWork, FakeUserDirectory
+
+from tests.projects.unit.fakes import (
+    AllowAllPermissionChecker,
+    FakeProjectsUnitOfWork,
+    FakeUserDirectory,
+)
 
 
 class _FakeEmailProvider:
-    """No real email provider is wired anywhere in this platform yet
-    (Notification Center channel providers are a standing gap) — this
-    stub isolates membership-invite logic from that unrelated gap."""
+    """Records delivery without using the composition root's SMTP adapter."""
 
     def __init__(self) -> None:
         self.sent = []

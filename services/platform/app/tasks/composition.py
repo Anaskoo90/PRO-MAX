@@ -29,7 +29,6 @@ from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.jobs.executor import JobExecutor
 from app.platform_core.jobs.scheduler import JobDefinition, JobScheduler
 from app.platform_core.logging.logger import get_logger
-from app.platform_core.notifications.dispatcher import NotificationDispatcher
 from app.projects.composition import ProjectsModule
 from app.projects.infrastructure.identity_adapter import IdentityUserDirectoryAdapter
 from app.tasks.application.label_management import LabelService
@@ -67,7 +66,7 @@ class TasksModule:
         self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
-        self.notification_dispatcher = NotificationDispatcher()
+        self.notification_dispatcher = identity_module.notification_dispatcher
 
         def uow_factory() -> TasksUnitOfWork:
             return TasksUnitOfWork(self._session_factory)

@@ -18,7 +18,6 @@ from app.identity.composition import IdentityModule
 from app.platform_core.configuration.settings import PlatformSettings
 from app.platform_core.di.container import ServiceContainer
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.notifications.dispatcher import NotificationDispatcher
 from app.projects.application.membership_management import ProjectMembershipService
 from app.projects.application.project_management import ProjectService
 from app.projects.application.template_management import ProjectTemplateService
@@ -26,7 +25,13 @@ from app.projects.application.workspace_management import WorkspaceService
 from app.projects.infrastructure.identity_adapter import IdentityUserDirectoryAdapter
 from app.projects.infrastructure.seed_data import PROJECTS_PERMISSION_CATALOG
 from app.projects.infrastructure.unit_of_work import ProjectsUnitOfWork
-from app.projects.presentation import deps, membership_router, projects_router, templates_router, workspaces_router
+from app.projects.presentation import (
+    deps,
+    membership_router,
+    projects_router,
+    templates_router,
+    workspaces_router,
+)
 
 
 class ProjectsModule:
@@ -38,7 +43,7 @@ class ProjectsModule:
         self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
         self.dispatcher = EventDispatcher()
-        self.notification_dispatcher = NotificationDispatcher()
+        self.notification_dispatcher = identity_module.notification_dispatcher
 
         def uow_factory() -> ProjectsUnitOfWork:
             return ProjectsUnitOfWork(self._session_factory)
