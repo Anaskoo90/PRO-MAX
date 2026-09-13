@@ -1,6 +1,31 @@
-# Local development environment only. Cloud provider for staging/prod
-# infrastructure is still undecided (standing gap, restated from the
-# Enterprise Architecture pack) — this file covers local dev exclusively.
+# Complete local runtime: infrastructure, migrations, and the FastAPI service.
+# Cloud deployment remains environment-specific; no production secret belongs
+# in this file.
+
+x-platform-environment: &platform-environment
+  ENVIRONMENT: local
+  SERVICE_NAME: guilddesk-platform
+  DATABASE_URL: postgresql+asyncpg://guilddesk:guilddesk@postgres:5432/guilddesk
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  GUILDDESK_SECRET_JWT_SIGNING_KEY: local-compose-jwt-signing-key-change-me
+  GUILDDESK_SECRET_TOKEN_HASH_PEPPER: local-compose-token-hash-pepper-change-me
+  GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+  API_VERSION: v1
+  CORS_ALLOWED_ORIGINS: '["http://localhost:5173"]'
+  WEB_APP_BASE_URL: http://localhost:5173
+  SMTP_HOST: mailpit
+  SMTP_PORT: 1025
+  SMTP_FROM_ADDRESS: no-reply@guilddesk.local
+  SMTP_FROM_NAME: GuildDesk
+  STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_REGION: us-east-1
+  S3_BUCKET: guilddesk
+  S3_ACCESS_KEY: guilddesk
+  S3_SECRET_KEY: guilddesk-dev-secret
+  GUILDDESK_SECRET_DISCORD_BOT_SERVICE_SECRET: dev-only-change-me
+  AI_PROVIDER: disabled
 
 services:
   postgres:
@@ -13,17 +38,32 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guilddesk -d guilddesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   rabbitmq:
     image: rabbitmq:3-management
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   mailpit:
     image: axllent/mailpit:v1.30.3
@@ -56,6 +96,94 @@ services:
     entrypoint: >
       /bin/sh -c "mc alias set local http://minio:9000 guilddesk guilddesk-dev-secret &&
       mc mb --ignore-existing local/guilddesk"
+
+  migrate:
+    image: guilddesk-platform:local
+    build:
+      context: ../..
+      dockerfile: services/platform/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *platform-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  api:
+    image: guilddesk-platform:local
+    build:
+      context: ../..
+      dockerfile: services/platform/Dockerfile
+    environment: *platform-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  discord-bot:
+    profiles:
+      - bot
+    image: guilddesk-discord-bot:local
+    build:
+      context: ../..
+      dockerfile: discord_bot/Dockerfile
+    environment:
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:-0}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-0}
+      API_URL: http://api:8000
+      PLATFORM_SERVICE_SECRET: dev-only-change-me
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    restart: unless-stopped
 
 volumes:
   pgdata:
