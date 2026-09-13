@@ -19,6 +19,7 @@ from app.identity.application.email_verification import EmailVerificationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.domain.events import UserRegistered
 from app.identity.domain.exceptions import AccountNotActiveError
+from app.identity.infrastructure.outbox import OutboxMessageOrmModel
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
@@ -26,6 +27,7 @@ from app.platform_core.notifications.email_provider import EmailMessage, EmailSe
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.utils import new_uuid7
+from sqlalchemy import select
 
 from tests.identity.unit.fakes import FakeAuditRecordSink
 
@@ -154,3 +156,21 @@ async def test_self_registration_fires_user_registered_and_creates_a_usable_veri
         remember_me=False,
     )
     assert login_result.tokens is not None
+
+    rows = (
+        await uow.session.execute(
+            select(OutboxMessageOrmModel).where(
+                OutboxMessageOrmModel.org_id == org_dto.id
+            )
+        )
+    ).scalars().all()
+    event_types = {
+        row.payload["payload"]["event_type"]
+        for row in rows
+    }
+    assert {
+        "identity.organization_created",
+        "identity.user_registered",
+        "identity.user_email_verified",
+        "identity.user_logged_in",
+    }.issubset(event_types)

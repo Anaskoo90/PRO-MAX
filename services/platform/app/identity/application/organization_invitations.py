@@ -37,6 +37,7 @@ from app.identity.domain.invitation import OrganizationInvitation
 from app.identity.domain.rbac import UserRoleAssignment
 from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
     NoProviderRegisteredError,
@@ -149,6 +150,11 @@ class OrganizationInvitationService:
                     metadata={"email": str(normalized_email), "role_id": str(role_id)},
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=invitation.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -208,6 +214,11 @@ class OrganizationInvitationService:
                     resource_type="organization_invitation",
                     resource_id=str(invitation.id),
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=invitation.org_id,
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
@@ -271,6 +282,11 @@ class OrganizationInvitationService:
                     resource_type="organization_invitation",
                     resource_id=str(invitation.id),
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=invitation.org_id,
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

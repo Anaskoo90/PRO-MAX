@@ -50,6 +50,11 @@ async def test_login_with_org_id_succeeds_for_a_valid_active_user() -> None:
 
     assert result.tokens is not None
     assert result.mfa_challenge_token is None
+    assert any(
+        event.payload["event_type"] == "identity.user_logged_in"
+        for event in uow.outbox.events
+    )
+    assert {event.org_id for event in uow.outbox.events} == {OrgId(org.id)}
 
 
 async def test_login_with_org_slug_resolves_to_the_same_organization() -> None:

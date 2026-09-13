@@ -30,6 +30,7 @@ from app.identity.domain.exceptions import (
 from app.identity.domain.value_objects import Email
 from app.platform_core.errors.infrastructure_exceptions import StorageError
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.security.hashing import PasswordHashingService
@@ -128,6 +129,11 @@ class UserManagementService:
                 PasswordHistoryEntry.create(user_id=user.id, password_hash=password_hash)
             )
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
@@ -255,6 +261,11 @@ class UserManagementService:
                     metadata={"reason": reason},
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
@@ -286,6 +297,11 @@ class UserManagementService:
                     resource_type="user",
                     resource_id=str(user.id),
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

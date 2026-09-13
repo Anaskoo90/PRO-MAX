@@ -29,6 +29,7 @@ from app.identity.domain.exceptions import (
 )
 from app.identity.domain.specifications import PasswordReuseSpecification
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
     NoProviderRegisteredError,
@@ -99,6 +100,11 @@ class PasswordManagementService:
 
             await self._apply_new_password(uow, user, new_password)
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -117,8 +123,14 @@ class PasswordManagementService:
             await uow.password_reset_tokens.add(
                 PasswordResetToken.create(user_id=user.id, token_hash=token_hash)
             )
+            event = PasswordResetRequested(aggregate_id=user.id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=user.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(PasswordResetRequested(aggregate_id=user.id))
+            await self._dispatcher.dispatch(event)
 
         try:
             await self._notification_dispatcher.dispatch(
@@ -177,6 +189,11 @@ class PasswordManagementService:
                 await uow.sessions.update(session)
 
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 

@@ -39,6 +39,7 @@ from app.identity.domain.exceptions import (
 )
 from app.identity.domain.specifications import AccountLockoutSpecification
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.messaging.idempotency import IdempotencyStore
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
@@ -138,6 +139,11 @@ class AuthenticationService:
             events.append(UserLoggedIn(aggregate_id=user.id, session_id=session.id))
             if suspicious:
                 events.append(SuspiciousLoginDetected(aggregate_id=user.id, session_id=session.id, ip_address=ip_address))
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
@@ -209,6 +215,11 @@ class AuthenticationService:
             if suspicious:
                 events.append(SuspiciousLoginDetected(aggregate_id=user.id, session_id=session.id, ip_address=ip_address))
             await uow.users.update(user)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             await self._audit_logger.record(
@@ -278,8 +289,17 @@ class AuthenticationService:
                 return  # logout is idempotent
             session.revoke()
             await uow.sessions.update(session)
+            user = await uow.users.get_by_id(session.user_id)
+            if user is None:
+                raise UserNotFoundError(session.user_id)
+            event = UserLoggedOut(aggregate_id=session.user_id, session_id=session.id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=user.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(UserLoggedOut(aggregate_id=session.user_id, session_id=session.id))
+            await self._dispatcher.dispatch(event)
 
     async def list_sessions(self, *, user_id: EntityId, current_session_id: EntityId | None) -> list[SessionDTO]:
         async with self._uow_factory() as uow:
@@ -303,8 +323,17 @@ class AuthenticationService:
                 raise SessionNotFoundError(session_id)
             session.revoke()
             await uow.sessions.update(session)
+            user = await uow.users.get_by_id(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            event = SessionRevoked(aggregate_id=user_id, session_id=session_id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=user.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(SessionRevoked(aggregate_id=user_id, session_id=session_id))
+            await self._dispatcher.dispatch(event)
 
 
 class OAuth2LoginService:

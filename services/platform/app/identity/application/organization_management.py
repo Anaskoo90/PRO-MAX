@@ -33,6 +33,7 @@ from app.identity.domain.rbac import UserRoleAssignment
 from app.identity.domain.value_objects import Email
 from app.platform_core.api.sorting import SortField
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
 from app.platform_core.shared_kernel.dtos import PagedResult
@@ -132,6 +133,11 @@ class OrganizationManagementService:
                     actor_user_id=owner.id, resource_type="organization", resource_id=str(org.id),
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=OrgId(org.id),
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(org), owner.id
@@ -195,6 +201,11 @@ class OrganizationManagementService:
                     metadata={"changed_keys": list(patch.keys())},
                 )
             )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=OrgId(org.id),
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(org)
@@ -223,6 +234,11 @@ class OrganizationManagementService:
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
                     metadata={"new_owner_user_id": str(new_owner_user_id)},
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=OrgId(org.id),
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
@@ -271,6 +287,11 @@ class OrganizationManagementService:
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action=action,
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=OrgId(org.id),
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

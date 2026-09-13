@@ -29,6 +29,7 @@ from app.identity.domain.exceptions import (
     UserNotFoundError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.messaging.idempotency import IdempotencyStore
 from app.platform_core.security.encryption import FieldEncryptionService
 from app.platform_core.security.hashing import hash_for_lookup
@@ -117,6 +118,11 @@ class MfaService:
                 await uow.mfa_factors.add(MfaFactor.new_recovery_code(user_id=user_id, recovery_code_hash=code_hash))
 
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return raw_codes
@@ -147,6 +153,11 @@ class MfaService:
             user.mark_mfa_disabled(MfaFactorType.TOTP)
             await uow.users.update(user)
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 

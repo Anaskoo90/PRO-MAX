@@ -21,6 +21,7 @@ from app.identity.domain.exceptions import (
     UserNotFoundError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
     NoProviderRegisteredError,
@@ -121,5 +122,10 @@ class EmailVerificationService:
             user.verify_email()
             await uow.users.update(user)
             events = user.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=user.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

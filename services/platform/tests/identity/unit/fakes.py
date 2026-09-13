@@ -175,6 +175,14 @@ class FakeAuditLogRepository:
         return results[:limit]
 
 
+class FakeOutboxWriter:
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def append(self, event) -> None:
+        self.events.append(event)
+
+
 class FakeUnitOfWork:
     """Satisfies IdentityUnitOfWorkPort for the repositories a given test
     actually exercises; unused attributes are left None deliberately, so a
@@ -192,6 +200,7 @@ class FakeUnitOfWork:
         self.permissions = permissions or FakePermissionRepository()
         self.user_role_assignments = user_role_assignments or FakeUserRoleAssignmentRepository()
         self.audit_logs = audit_logs or FakeAuditLogRepository()
+        self.outbox = FakeOutboxWriter()
 
     async def flush(self) -> None:
         return None
