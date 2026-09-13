@@ -57,6 +57,28 @@ async def test_login_with_org_id_succeeds_for_a_valid_active_user() -> None:
     assert {event.org_id for event in uow.outbox.events} == {OrgId(org.id)}
 
 
+async def test_login_token_marks_its_own_session_as_current() -> None:
+    uow = FakeUnitOfWork()
+    org, user = await _make_org_and_active_user(uow)
+    token_service = JwtTokenService(signing_key="a" * 32)
+    service = _make_service(uow)
+
+    result = await service.login(
+        org_id=OrgId(org.id), email="user@example.com", password=_PASSWORD,
+        ip_address="127.0.0.1", device_info=None, remember_me=False,
+    )
+    claims = token_service.verify(result.tokens.access_token)
+
+    sessions = await service.list_sessions(
+        user_id=user.id, current_session_id=claims.session_id,
+    )
+
+    assert claims.session_id is not None
+    assert len(sessions) == 1
+    assert sessions[0].id == claims.session_id
+    assert sessions[0].is_current is True
+
+
 async def test_login_with_org_slug_resolves_to_the_same_organization() -> None:
     uow = FakeUnitOfWork()
     org, user = await _make_org_and_active_user(uow, slug="acme")

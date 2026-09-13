@@ -25,6 +25,7 @@ class TokenClaims:
     org_id: UUID
     scopes: tuple[str, ...]
     expires_at_epoch: int
+    session_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,7 @@ class JwtTokenService:
         user_id: UUID,
         org_id: UUID,
         scopes: list[str],
+        session_id: UUID | None = None,
         ttl: timedelta = timedelta(minutes=15),
     ) -> str:
         now = utcnow()
@@ -65,6 +67,8 @@ class JwtTokenService:
             "iat": int(now.timestamp()),
             "exp": int((now + ttl).timestamp()),
         }
+        if session_id is not None:
+            payload["sid"] = str(session_id)
         return jwt.encode(payload, self._signing_key, algorithm=self._algorithm)
 
     def verify(self, token: str) -> TokenClaims:
@@ -74,6 +78,7 @@ class JwtTokenService:
             org_id=UUID(payload["org_id"]),
             scopes=tuple(payload.get("scopes", [])),
             expires_at_epoch=payload["exp"],
+            session_id=UUID(payload["sid"]) if payload.get("sid") else None,
         )
 
     def issue_mfa_challenge_token(

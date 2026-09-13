@@ -17,6 +17,27 @@ def test_issued_token_verifies_and_round_trips_claims() -> None:
     assert claims.scopes == ("team:create",)
 
 
+def test_access_token_round_trips_its_session_identifier() -> None:
+    service = JwtTokenService(signing_key="a" * 32)
+    session_id = new_uuid7()
+
+    token = service.issue_access_token(
+        user_id=new_uuid7(), org_id=new_uuid7(), scopes=[], session_id=session_id,
+    )
+
+    assert service.verify(token).session_id == session_id
+
+
+def test_access_token_without_a_session_identifier_remains_valid() -> None:
+    service = JwtTokenService(signing_key="a" * 32)
+
+    token = service.issue_access_token(
+        user_id=new_uuid7(), org_id=new_uuid7(), scopes=[],
+    )
+
+    assert service.verify(token).session_id is None
+
+
 def test_token_signed_with_a_different_key_fails_verification() -> None:
     issuer = JwtTokenService(signing_key="a" * 32)
     verifier = JwtTokenService(signing_key="b" * 32)

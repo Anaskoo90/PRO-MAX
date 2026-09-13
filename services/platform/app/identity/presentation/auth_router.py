@@ -89,7 +89,9 @@ async def list_sessions(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: AuthenticationService = Depends(deps.get_authentication_service),
 ) -> DataResponse[list[SessionResponse]]:
-    sessions = await service.list_sessions(user_id=claims.subject_user_id, current_session_id=None)
+    sessions = await service.list_sessions(
+        user_id=claims.subject_user_id, current_session_id=claims.session_id,
+    )
     return DataResponse(
         data=[
             SessionResponse(

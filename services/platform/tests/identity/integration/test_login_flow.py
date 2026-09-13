@@ -68,6 +68,13 @@ async def test_login_with_org_id_against_real_database(uow) -> None:
 
     assert result.tokens is not None
     assert result.mfa_challenge_token is None
+    claims = JwtTokenService(signing_key="a" * 32).verify(result.tokens.access_token)
+    sessions = await service.list_sessions(
+        user_id=_user.id, current_session_id=claims.session_id,
+    )
+    assert len(sessions) == 1
+    assert sessions[0].ip_address == "127.0.0.1"
+    assert sessions[0].is_current is True
 
 
 async def test_login_with_org_slug_against_real_database(uow) -> None:

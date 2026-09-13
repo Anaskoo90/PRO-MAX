@@ -252,7 +252,8 @@ class AuthenticationService:
         )
         await uow.sessions.add(session)
         access_token = self._token_service.issue_access_token(
-            user_id=user.id, org_id=user.org_id, scopes=[], ttl=self._policy.access_token_ttl
+            user_id=user.id, org_id=user.org_id, scopes=[], session_id=session.id,
+            ttl=self._policy.access_token_ttl,
         )
         tokens = AuthTokens(
             access_token=access_token,

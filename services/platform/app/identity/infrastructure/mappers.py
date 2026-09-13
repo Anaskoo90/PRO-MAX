@@ -79,7 +79,10 @@ def session_to_domain(row: SessionOrmModel) -> Session:
         user_id=EntityId(row.user_id),
         refresh_token_hash=row.refresh_token_hash,
         device_info=row.device_info,
-        ip_address=row.ip_address,
+        # PostgreSQL INET values are returned by asyncpg as IPv4Address /
+        # IPv6Address objects; the domain and API contracts intentionally
+        # expose their canonical string representation.
+        ip_address=str(row.ip_address),
         remember_me=row.remember_me,
         created_at=row.created_at,
         expires_at=row.expires_at,
@@ -344,7 +347,7 @@ def audit_log_to_domain(row: AuditLogOrmModel) -> AuditLogRecord:
         actor_user_id=UserId(row.actor_user_id) if row.actor_user_id else None,
         resource_type=row.resource_type,
         resource_id=row.resource_id,
-        ip_address=row.ip_address,
+        ip_address=str(row.ip_address) if row.ip_address is not None else None,
         metadata=row.metadata_,
         occurred_at=row.occurred_at,
     )
