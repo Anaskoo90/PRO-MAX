@@ -4,7 +4,7 @@ import { ApiRequestError } from "@guilddesk/api-client";
 import { useAuth } from "./AuthContext";
 import styles from "./LoginPage.module.css";
 
-type Step = { kind: "credentials" } | { kind: "mfa"; userId: string };
+type Step = { kind: "credentials" } | { kind: "mfa"; challengeToken: string };
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiRequestError ? err.message : fallback;
@@ -28,8 +28,8 @@ export function LoginPage() {
     setIsSubmitting(true);
     try {
       const outcome = await login(orgSlug.trim(), email.trim(), password);
-      if (outcome.requiresMfa && outcome.mfaChallengeUserId) {
-        setStep({ kind: "mfa", userId: outcome.mfaChallengeUserId });
+      if (outcome.requiresMfa && outcome.mfaChallengeToken) {
+        setStep({ kind: "mfa", challengeToken: outcome.mfaChallengeToken });
       } else {
         navigate("/", { replace: true });
       }
@@ -46,7 +46,7 @@ export function LoginPage() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await completeMfaChallenge(step.userId, code.trim());
+      await completeMfaChallenge(step.challengeToken, code.trim());
       navigate("/", { replace: true });
     } catch (err) {
       setError(errorMessage(err, "That code didn't work. Please try again."));

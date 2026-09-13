@@ -18,12 +18,12 @@ interface AuthState {
 
 export interface LoginOutcome {
   requiresMfa: boolean;
-  mfaChallengeUserId?: string;
+  mfaChallengeToken?: string;
 }
 
 interface AuthContextValue extends AuthState {
   login(orgSlug: string, email: string, password: string): Promise<LoginOutcome>;
-  completeMfaChallenge(userId: string, code: string): Promise<void>;
+  completeMfaChallenge(challengeToken: string, code: string): Promise<void>;
   logout(): Promise<void>;
 }
 
@@ -110,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (orgSlug: string, email: string, password: string): Promise<LoginOutcome> => {
       const result = await api.auth.login({ org_slug: orgSlug, email, password });
       if (result.kind === "mfa_challenge") {
-        return { requiresMfa: true, mfaChallengeUserId: result.challenge.mfa_challenge_user_id };
+        return { requiresMfa: true, mfaChallengeToken: result.challenge.mfa_challenge_token };
       }
       await establishSession(result.tokens.access_token, result.tokens.refresh_token);
       return { requiresMfa: false };
@@ -119,8 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const completeMfaChallenge = useCallback(
-    async (userId: string, code: string): Promise<void> => {
-      const tokens = await api.auth.verifyMfaChallenge({ user_id: userId, code });
+    async (challengeToken: string, code: string): Promise<void> => {
+      const tokens = await api.auth.verifyMfaChallenge({ challenge_token: challengeToken, code });
       await establishSession(tokens.access_token, tokens.refresh_token);
     },
     [establishSession],

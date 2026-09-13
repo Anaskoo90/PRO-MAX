@@ -19,7 +19,8 @@ export interface TokenResponse {
 }
 
 export interface MfaChallenge {
-  mfa_challenge_user_id: string;
+  mfa_required: true;
+  mfa_challenge_token: string;
   available_factors: string[];
 }
 
@@ -28,7 +29,7 @@ export type LoginResult =
   | { kind: "mfa_challenge"; challenge: MfaChallenge };
 
 export interface VerifyMfaChallengeRequest {
-  user_id: string;
+  challenge_token: string;
   code: string;
   remember_me?: boolean;
 }
@@ -61,10 +62,8 @@ export interface RecoveryCodes {
   recovery_codes: string[];
 }
 
-function isMfaChallenge(result: TokenResponse | (MfaChallenge & { mfa_required: true })): result is MfaChallenge & {
-  mfa_required: true;
-} {
-  return "mfa_challenge_user_id" in result;
+function isMfaChallenge(result: TokenResponse | MfaChallenge): result is MfaChallenge {
+  return "mfa_challenge_token" in result;
 }
 
 export function createAuthApi(client: ApiClient) {
@@ -74,7 +73,7 @@ export function createAuthApi(client: ApiClient) {
      * backend distinguishes these by shape, not HTTP status, so the client
      * mirrors that with a discriminated union rather than throwing. */
     async login(request: LoginRequest): Promise<LoginResult> {
-      const result = await client.post<TokenResponse | (MfaChallenge & { mfa_required: true })>(
+      const result = await client.post<TokenResponse | MfaChallenge>(
         "/api/v1/auth/login",
         request,
       );

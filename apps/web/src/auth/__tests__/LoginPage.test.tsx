@@ -74,7 +74,7 @@ describe("LoginPage", () => {
     const user = userEvent.setup();
     vi.mocked(api.auth.login).mockResolvedValue({
       kind: "mfa_challenge",
-      challenge: { mfa_challenge_user_id: "user-1", available_factors: ["totp"] },
+      challenge: { mfa_required: true, mfa_challenge_token: "signed-challenge", available_factors: ["totp"] },
     });
     vi.mocked(api.auth.verifyMfaChallenge).mockResolvedValue({
       access_token: "a",
@@ -100,7 +100,10 @@ describe("LoginPage", () => {
     await user.click(screen.getByRole("button", { name: /^verify$/i }));
 
     expect(await screen.findByText("Dashboard home")).toBeInTheDocument();
-    expect(api.auth.verifyMfaChallenge).toHaveBeenCalledWith({ user_id: "user-1", code: "123456" });
+    expect(api.auth.verifyMfaChallenge).toHaveBeenCalledWith({
+      challenge_token: "signed-challenge",
+      code: "123456",
+    });
   });
 
   it("shows the backend's error message when login fails", async () => {

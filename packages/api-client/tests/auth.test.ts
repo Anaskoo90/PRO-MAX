@@ -46,14 +46,14 @@ describe("auth api", () => {
   });
 
   it("returns an mfa_challenge result when login requires a second factor", async () => {
-    mockFetchOnce({ mfa_required: true, mfa_challenge_user_id: "user-1", available_factors: ["totp"] });
+    mockFetchOnce({ mfa_required: true, mfa_challenge_token: "signed-challenge", available_factors: ["totp"] });
     const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
 
     const result = await auth.login({ org_id: "org-1", email: "a@b.com", password: "secret" });
 
     expect(result).toEqual({
       kind: "mfa_challenge",
-      challenge: { mfa_challenge_user_id: "user-1", available_factors: ["totp"], mfa_required: true },
+      challenge: { mfa_challenge_token: "signed-challenge", available_factors: ["totp"], mfa_required: true },
     });
   });
 
@@ -61,9 +61,11 @@ describe("auth api", () => {
     mockFetchOnce({ data: { access_token: "a", refresh_token: "r", token_type: "Bearer", expires_in_seconds: 900 } });
     const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
 
-    const tokens = await auth.verifyMfaChallenge({ user_id: "user-1", code: "123456" });
+    const tokens = await auth.verifyMfaChallenge({ challenge_token: "signed-challenge", code: "123456" });
 
     expect(tokens.access_token).toBe("a");
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ challenge_token: "signed-challenge", code: "123456" });
   });
 
   it("unwraps the DataResponse envelope for getMyProfile", async () => {
