@@ -181,6 +181,7 @@ class Ticket(EventRecordingMixin):
         *,
         id: EntityId,
         org_id: OrgId,
+        category_id: EntityId | None,
         discord_guild_id: str,
         ticket_number: int,
         discord_channel_id: str,
@@ -199,6 +200,7 @@ class Ticket(EventRecordingMixin):
         super().__init__()
         self.id = id
         self.org_id = org_id
+        self.category_id = category_id
         self.discord_guild_id = discord_guild_id
         self.ticket_number = ticket_number
         self.discord_channel_id = discord_channel_id
@@ -229,6 +231,7 @@ class Ticket(EventRecordingMixin):
         discord_channel_id: str,
         title: str,
         opener: TicketActor,
+        category_id: EntityId | None = None,
     ) -> Ticket:
         # No "at least one identity set" check here: TicketActor's own
         # __post_init__ already guarantees that for every instance that
@@ -236,6 +239,7 @@ class Ticket(EventRecordingMixin):
         ticket = cls(
             id=EntityId(new_uuid7()),
             org_id=org_id,
+            category_id=category_id,
             discord_guild_id=discord_guild_id,
             ticket_number=ticket_number,
             discord_channel_id=discord_channel_id,
@@ -247,7 +251,7 @@ class Ticket(EventRecordingMixin):
         ticket.record_event(
             TicketOpened(
                 aggregate_id=ticket.id, org_id=org_id, discord_guild_id=discord_guild_id,
-                ticket_number=ticket_number,
+                ticket_number=ticket_number, category_id=category_id,
             )
         )
         return ticket

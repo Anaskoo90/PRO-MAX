@@ -11,13 +11,9 @@ single, stateless, globally-shared view (registered once at startup via
 bot.add_view, per the design doc's persistence note) instead of one view
 instance per ticket.
 
-Staff-only actions (claim/unclaim/transfer/close) are gated by
-has_staff_role_permission — deliberately unioned across every category
-configured for the guild rather than looked up per-category, since a
-Ticket doesn't record which category created it yet (a Phase 1B
-simplification, not an oversight: adding that link is a small, isolated
-addition for whenever a real caller needs true per-category staff
-restriction).
+Staff-only actions (claim/unclaim/transfer/close) are gated by the roles
+configured for the ticket's own category. Legacy tickets without a
+category fail closed to guild administrators only.
 """
 
 from __future__ import annotations
@@ -45,14 +41,18 @@ _MAX_SELECT_OPTIONS = 25
 _PERMISSION_REQUIRED_MESSAGE = "You need a configured staff role (or 'Manage Server') to do that."
 
 
-async def _guild_staff_role_ids(bot: GuildDeskBot, discord_guild_id: str) -> list[str]:
+async def _category_staff_role_ids(
+    bot: GuildDeskBot, discord_guild_id: str, category_id: str | None,
+) -> list[str]:
+    if category_id is None:
+        return []
     result = await bot.api_client.list_ticket_categories(discord_guild_id=discord_guild_id)
     if not result.ok:
         return []
-    role_ids: set[str] = set()
     for category in result.categories:
-        role_ids.update(category.staff_discord_role_ids)
-    return list(role_ids)
+        if category.id == category_id:
+            return list(category.staff_discord_role_ids)
+    return []
 
 
 class TicketFormModal(discord.ui.Modal):
@@ -95,6 +95,7 @@ class TicketFormModal(discord.ui.Modal):
 
         result = await self._bot.api_client.create_ticket(
             discord_guild_id=str(guild.id), discord_channel_id=str(channel.id),
+            category_id=self._category.id,
             title=f"{self._category.name}: {self.description.value}"[:200],
             opener_discord_user_id=str(interaction.user.id),
         )
@@ -259,8 +260,10 @@ class TicketControlView(discord.ui.View):
             return None
         return result.ticket
 
-    async def _assert_staff(self, interaction: discord.Interaction) -> bool:
-        staff_role_ids = await _guild_staff_role_ids(self._bot, str(interaction.guild.id))
+    async def _assert_staff(self, interaction: discord.Interaction, *, category_id: str | None) -> bool:
+        staff_role_ids = await _category_staff_role_ids(
+            self._bot, str(interaction.guild.id), category_id,
+        )
         if has_staff_role_permission(interaction, staff_role_ids):
             return True
         await interaction.response.send_message(
@@ -271,10 +274,10 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="ticket_control:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._assert_staff(interaction):
-            return
         ticket = await self._resolve_ticket(interaction)
         if ticket is None:
+            return
+        if not await self._assert_staff(interaction, category_id=ticket.category_id):
             return
         result = await self._bot.api_client.claim_ticket(
             ticket_id=ticket.id, claimant_discord_user_id=str(interaction.user.id)
@@ -289,10 +292,10 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="Unclaim", style=discord.ButtonStyle.secondary, custom_id="ticket_control:unclaim")
     async def unclaim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._assert_staff(interaction):
-            return
         ticket = await self._resolve_ticket(interaction)
         if ticket is None:
+            return
+        if not await self._assert_staff(interaction, category_id=ticket.category_id):
             return
         result = await self._bot.api_client.unclaim_ticket(ticket_id=ticket.id)
         if not result.ok:
@@ -305,10 +308,10 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="Transfer", style=discord.ButtonStyle.primary, custom_id="ticket_control:transfer")
     async def transfer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._assert_staff(interaction):
-            return
         ticket = await self._resolve_ticket(interaction)
         if ticket is None:
+            return
+        if not await self._assert_staff(interaction, category_id=ticket.category_id):
             return
         await interaction.response.send_message(
             "Select the new claimant:", view=TicketTransferSelectView(bot=self._bot, ticket_id=ticket.id),
@@ -317,10 +320,10 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="ticket_control:close")
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._assert_staff(interaction):
-            return
         ticket = await self._resolve_ticket(interaction)
         if ticket is None:
+            return
+        if not await self._assert_staff(interaction, category_id=ticket.category_id):
             return
         result = await self._bot.api_client.close_ticket(
             ticket_id=ticket.id, closed_by_discord_user_id=str(interaction.user.id)

@@ -4,10 +4,12 @@ from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
+from app.ticket_system.domain.entities import TicketCategory
 from app.ticket_system.domain.exceptions import (
     GuildNotLinkedForTicketsError,
     InsufficientTicketPermissionError,
     InvalidTicketTransitionError,
+    TicketCategoryNotFoundError,
     TicketNotFoundError,
 )
 from app.ticket_system.domain.value_objects import TicketActor
@@ -33,6 +35,21 @@ def _make_service(uow, permission_checker=None, guild_resolver=None) -> TicketLi
         permission_checker=permission_checker or AllowAllPermissionChecker(),
         guild_resolver=guild_resolver,
     )
+
+
+def _add_category(
+    uow, org_id: OrgId, *, guild_id: str = "111", active: bool = True,
+) -> TicketCategory:
+    category = TicketCategory.create(
+        org_id=org_id,
+        discord_guild_id=guild_id,
+        name="Billing",
+        discord_category_channel_id="category-channel",
+        staff_discord_role_ids=["billing-staff"],
+    )
+    category.is_active = active
+    uow.ticket_categories.categories[category.id] = category
+    return category
 
 
 @pytest.fixture
@@ -92,6 +109,34 @@ async def test_create_ticket_rejects_an_unlinked_or_foreign_guild(context) -> No
                 title="Must be rejected",
                 opener=TicketActor(discord_user_id="333"),
             )
+
+
+async def test_create_ticket_uses_only_a_category_owned_by_the_same_org_and_guild(context) -> None:
+    uow, org_id, actor_id = context
+    service = _make_service(uow)
+    category = _add_category(uow, org_id)
+
+    ticket = await service.create_ticket(
+        org_id=org_id, actor_user_id=actor_id, discord_guild_id="111",
+        discord_channel_id="222", title="Authorized category",
+        opener=TicketActor(discord_user_id="333"), category_id=category.id,
+    )
+
+    assert ticket.category_id == category.id
+
+
+async def test_create_ticket_rejects_a_cross_tenant_category(context) -> None:
+    uow, org_id, actor_id = context
+    service = _make_service(uow)
+    other_org_category = _add_category(uow, OrgId(new_uuid7()))
+
+    with pytest.raises(TicketCategoryNotFoundError):
+        await service.create_ticket(
+            org_id=org_id, actor_user_id=actor_id, discord_guild_id="111",
+            discord_channel_id="222", title="Cross-tenant category",
+            opener=TicketActor(discord_user_id="333"),
+            category_id=other_org_category.id,
+        )
 
 
 async def test_create_ticket_allocates_sequential_numbers_per_org(context) -> None:
@@ -491,13 +536,15 @@ async def test_transfer_ticket_rejects_an_unclaimed_ticket(context) -> None:
 async def test_create_ticket_from_bot_resolves_org_via_guild_resolver(context) -> None:
     uow, org_id, _actor_id = context
     service = _make_service(uow, guild_resolver=FakeGuildResolver(org_ids_by_guild={"111": org_id}))
+    category = _add_category(uow, org_id)
 
     ticket = await service.create_ticket_from_bot(
-        discord_guild_id="111", discord_channel_id="222", title="Need help",
+        discord_guild_id="111", discord_channel_id="222", category_id=category.id, title="Need help",
         opener=TicketActor(discord_user_id="333"),
     )
 
     assert ticket.org_id == org_id
+    assert ticket.category_id == category.id
     assert ticket.status == "open"
     # No actor_user_id on a bot-initiated action's audit entry.
     assert uow.audit_logs.records[0].actor_user_id is None
@@ -509,8 +556,27 @@ async def test_create_ticket_from_bot_rejects_an_unlinked_guild(context) -> None
 
     with pytest.raises(GuildNotLinkedForTicketsError):
         await service.create_ticket_from_bot(
-            discord_guild_id="does-not-exist", discord_channel_id="222", title="Need help",
+            discord_guild_id="does-not-exist", discord_channel_id="222", category_id=new_uuid7(), title="Need help",
             opener=TicketActor(discord_user_id="333"),
+        )
+
+
+@pytest.mark.parametrize("category_scope", ["other_org", "other_guild", "inactive"])
+async def test_create_ticket_from_bot_rejects_an_inaccessible_category(
+    context, category_scope: str,
+) -> None:
+    uow, org_id, _actor_id = context
+    category_org_id = OrgId(new_uuid7()) if category_scope == "other_org" else org_id
+    category_guild_id = "other-guild" if category_scope == "other_guild" else "111"
+    category = _add_category(
+        uow, category_org_id, guild_id=category_guild_id, active=category_scope != "inactive",
+    )
+    service = _make_service(uow)
+
+    with pytest.raises(TicketCategoryNotFoundError):
+        await service.create_ticket_from_bot(
+            discord_guild_id="111", discord_channel_id="222", category_id=category.id,
+            title="Must be rejected", opener=TicketActor(discord_user_id="333"),
         )
 
 
@@ -524,9 +590,10 @@ async def test_bot_facing_methods_require_no_guilddesk_permission(context) -> No
         uow, permission_checker=DenyAllPermissionChecker(),
         guild_resolver=FakeGuildResolver(org_ids_by_guild={"111": org_id}),
     )
+    category = _add_category(uow, org_id)
 
     created = await denying_service.create_ticket_from_bot(
-        discord_guild_id="111", discord_channel_id="222", title="Need help",
+        discord_guild_id="111", discord_channel_id="222", category_id=category.id, title="Need help",
         opener=TicketActor(discord_user_id="333"),
     )
     claimed = await denying_service.claim_ticket_from_bot(

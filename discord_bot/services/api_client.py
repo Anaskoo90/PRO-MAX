@@ -26,6 +26,7 @@ class TicketData:
     title: str
     status: str
     claimed_by_discord_user_id: str | None
+    category_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +199,7 @@ class ApiClient:
         return TicketData(
             id=str(data["id"]), ticket_number=data["ticket_number"], discord_channel_id=data["discord_channel_id"],
             title=data["title"], status=data["status"], claimed_by_discord_user_id=data.get("claimed_by_discord_user_id"),
+            category_id=str(data["category_id"]) if data.get("category_id") else None,
         )
 
     async def list_ticket_categories(self, *, discord_guild_id: str) -> TicketCategoriesResult:
@@ -250,7 +252,8 @@ class ApiClient:
         )
 
     async def create_ticket(
-        self, *, discord_guild_id: str, discord_channel_id: str, title: str, opener_discord_user_id: str
+        self, *, discord_guild_id: str, discord_channel_id: str, category_id: str,
+        title: str, opener_discord_user_id: str,
     ) -> TicketResult:
         """POST /api/v1/discord/tickets — called after the ticket channel
         has already been created in Discord (the backend never talks to
@@ -260,7 +263,7 @@ class ApiClient:
                 "/api/v1/discord/tickets",
                 json={
                     "discord_guild_id": discord_guild_id, "discord_channel_id": discord_channel_id, "title": title,
-                    "opener_discord_user_id": opener_discord_user_id,
+                    "opener_discord_user_id": opener_discord_user_id, "category_id": category_id,
                 },
                 headers=self._bot_headers,
             )

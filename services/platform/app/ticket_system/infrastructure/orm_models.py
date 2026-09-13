@@ -46,6 +46,7 @@ class TicketOrmModel(TicketSystemBase):
         UniqueConstraint("org_id", "ticket_number", name="uq_tickets_org_id_ticket_number"),
         Index("ix_tickets_org_id", "org_id"),
         Index("ix_tickets_org_id_status", "org_id", "status"),
+        Index("ix_tickets_category_id", "category_id"),
         # At most one active (open or claimed) ticket per Discord channel —
         # a closed ticket's channel could in principle be reused/archived
         # later.
@@ -65,6 +66,11 @@ class TicketOrmModel(TicketSystemBase):
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     org_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("ticket_system.ticket_categories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     discord_guild_id: Mapped[str] = mapped_column(String, nullable=False)
     ticket_number: Mapped[int] = mapped_column(Integer, nullable=False)
     discord_channel_id: Mapped[str] = mapped_column(String, nullable=False)

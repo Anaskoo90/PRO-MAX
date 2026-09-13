@@ -17,6 +17,7 @@ TicketMessageBody = Annotated[
 
 
 class CreateTicketRequest(BaseModel):
+    category_id: UUID | None = None
     discord_guild_id: str = Field(min_length=1, max_length=64)
     discord_channel_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)
@@ -55,6 +56,7 @@ class CreateTicketMessageViaBotRequest(BaseModel):
 class TicketResponse(BaseModel):
     id: UUID
     org_id: UUID
+    category_id: UUID | None
     discord_guild_id: str
     ticket_number: int
     discord_channel_id: str
@@ -108,6 +110,7 @@ class TicketAttachmentResponse(BaseModel):
 
 class TicketListItemResponse(BaseModel):
     id: UUID
+    category_id: UUID | None
     ticket_number: int
     title: str
     status: str
@@ -122,6 +125,7 @@ class TicketListItemResponse(BaseModel):
 
 
 class CreateTicketViaBotRequest(BaseModel):
+    category_id: UUID
     discord_guild_id: str = Field(min_length=1, max_length=64)
     discord_channel_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)

@@ -24,6 +24,7 @@ def ticket_to_domain(row: TicketOrmModel) -> Ticket:
     return Ticket(
         id=EntityId(row.id),
         org_id=OrgId(row.org_id),
+        category_id=EntityId(row.category_id) if row.category_id else None,
         discord_guild_id=row.discord_guild_id,
         ticket_number=row.ticket_number,
         discord_channel_id=row.discord_channel_id,
@@ -44,6 +45,7 @@ def ticket_to_domain(row: TicketOrmModel) -> Ticket:
 def ticket_to_orm(entity: Ticket, row: TicketOrmModel | None = None) -> TicketOrmModel:
     row = row or TicketOrmModel(id=entity.id)
     row.org_id = entity.org_id
+    row.category_id = entity.category_id
     row.discord_guild_id = entity.discord_guild_id
     row.ticket_number = entity.ticket_number
     row.discord_channel_id = entity.discord_channel_id

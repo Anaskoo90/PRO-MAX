@@ -46,7 +46,8 @@ _TICKET_SORT_FIELDS = {"created_at", "ticket_number", "status"}
 
 def _to_response(dto) -> TicketResponse:
     return TicketResponse(
-        id=dto.id, org_id=dto.org_id, discord_guild_id=dto.discord_guild_id, ticket_number=dto.ticket_number,
+        id=dto.id, org_id=dto.org_id, category_id=dto.category_id,
+        discord_guild_id=dto.discord_guild_id, ticket_number=dto.ticket_number,
         discord_channel_id=dto.discord_channel_id, title=dto.title, status=dto.status,
         opener_discord_user_id=dto.opener_discord_user_id, opener_user_id=dto.opener_user_id,
         claimed_by_discord_user_id=dto.claimed_by_discord_user_id, claimed_by_user_id=dto.claimed_by_user_id,
@@ -57,7 +58,8 @@ def _to_response(dto) -> TicketResponse:
 
 def _to_list_item(dto) -> TicketListItemResponse:
     return TicketListItemResponse(
-        id=dto.id, ticket_number=dto.ticket_number, title=dto.title, status=dto.status,
+        id=dto.id, category_id=dto.category_id, ticket_number=dto.ticket_number,
+        title=dto.title, status=dto.status,
         discord_channel_id=dto.discord_channel_id, opener_discord_user_id=dto.opener_discord_user_id,
         claimed_by_discord_user_id=dto.claimed_by_discord_user_id, created_at=dto.created_at,
         closed_at=dto.closed_at,
@@ -122,6 +124,7 @@ async def create_ticket(
     ticket = await service.create_ticket(
         org_id=parsed_org_id, actor_user_id=claims.subject_user_id, discord_guild_id=request.discord_guild_id,
         discord_channel_id=request.discord_channel_id, title=request.title, opener=opener,
+        category_id=request.category_id,
     )
     return DataResponse(data=_to_response(ticket))
 

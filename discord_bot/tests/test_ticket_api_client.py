@@ -56,17 +56,20 @@ async def test_create_ticket_category_returns_the_created_category() -> None:
 async def test_create_ticket_returns_the_created_ticket() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/discord/tickets"
+        assert __import__("json").loads(request.content)["category_id"] == "category-1"
         return httpx.Response(
             201,
-            json={"data": {"id": "1", "ticket_number": 1, "discord_channel_id": "222", "title": "Help", "status": "open", "claimed_by_discord_user_id": None}},
+            json={"data": {"id": "1", "category_id": "category-1", "ticket_number": 1, "discord_channel_id": "222", "title": "Help", "status": "open", "claimed_by_discord_user_id": None}},
         )
 
     result = await _client(handler).create_ticket(
-        discord_guild_id="111", discord_channel_id="222", title="Help", opener_discord_user_id="333",
+        discord_guild_id="111", discord_channel_id="222", category_id="category-1",
+        title="Help", opener_discord_user_id="333",
     )
 
     assert result.ok is True
     assert result.ticket.status == "open"
+    assert result.ticket.category_id == "category-1"
 
 
 async def test_create_ticket_surfaces_backend_error() -> None:
@@ -74,7 +77,8 @@ async def test_create_ticket_surfaces_backend_error() -> None:
         return httpx.Response(422, json={"code": "guild_not_linked_for_tickets", "message": "Discord guild '111' is not linked to a GuildDesk organization"})
 
     result = await _client(handler).create_ticket(
-        discord_guild_id="111", discord_channel_id="222", title="Help", opener_discord_user_id="333",
+        discord_guild_id="111", discord_channel_id="222", category_id="category-1",
+        title="Help", opener_discord_user_id="333",
     )
 
     assert result.ok is False

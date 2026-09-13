@@ -39,7 +39,8 @@ router = versioned_router(version="v1", tags=["tickets-bot"])
 
 def _to_response(dto) -> TicketResponse:
     return TicketResponse(
-        id=dto.id, org_id=dto.org_id, discord_guild_id=dto.discord_guild_id, ticket_number=dto.ticket_number,
+        id=dto.id, org_id=dto.org_id, category_id=dto.category_id,
+        discord_guild_id=dto.discord_guild_id, ticket_number=dto.ticket_number,
         discord_channel_id=dto.discord_channel_id, title=dto.title, status=dto.status,
         opener_discord_user_id=dto.opener_discord_user_id, opener_user_id=dto.opener_user_id,
         claimed_by_discord_user_id=dto.claimed_by_discord_user_id, claimed_by_user_id=dto.claimed_by_user_id,
@@ -111,7 +112,8 @@ async def create_ticket_via_bot(
 ) -> DataResponse[TicketResponse]:
     ticket = await service.create_ticket_from_bot(
         discord_guild_id=request.discord_guild_id, discord_channel_id=request.discord_channel_id,
-        title=request.title, opener=TicketActor(discord_user_id=request.opener_discord_user_id),
+        category_id=request.category_id, title=request.title,
+        opener=TicketActor(discord_user_id=request.opener_discord_user_id),
     )
     return DataResponse(data=_to_response(ticket))
 

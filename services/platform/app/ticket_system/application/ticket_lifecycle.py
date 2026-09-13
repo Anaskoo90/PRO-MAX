@@ -25,13 +25,18 @@ from app.ticket_system.application.dtos import TicketDTO
 from app.ticket_system.application.ports import GuildResolverPort, OrgPermissionCheckerPort
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
 from app.ticket_system.domain.entities import Ticket
-from app.ticket_system.domain.exceptions import GuildNotLinkedForTicketsError, TicketNotFoundError
+from app.ticket_system.domain.exceptions import (
+    GuildNotLinkedForTicketsError,
+    TicketCategoryNotFoundError,
+    TicketNotFoundError,
+)
 from app.ticket_system.domain.value_objects import TicketActor
 
 
 def _to_dto(ticket: Ticket) -> TicketDTO:
     return TicketDTO(
-        id=ticket.id, org_id=ticket.org_id, discord_guild_id=ticket.discord_guild_id,
+        id=ticket.id, org_id=ticket.org_id, category_id=ticket.category_id,
+        discord_guild_id=ticket.discord_guild_id,
         ticket_number=ticket.ticket_number, discord_channel_id=ticket.discord_channel_id, title=ticket.title,
         status=ticket.status.value, opener_discord_user_id=ticket.opener_discord_user_id,
         opener_user_id=ticket.opener_user_id, claimed_by_discord_user_id=ticket.claimed_by_discord_user_id,
@@ -76,7 +81,7 @@ class TicketLifecycleService:
 
     async def create_ticket(
         self, *, org_id: OrgId, actor_user_id: UserId, discord_guild_id: str, discord_channel_id: str, title: str,
-        opener: TicketActor,
+        opener: TicketActor, category_id: EntityId | None = None,
     ) -> TicketDTO:
         await self._authorization.assert_permission(org_id=org_id, user_id=actor_user_id, action="create")
         await self._assert_guild_owned_by_org(
@@ -84,7 +89,7 @@ class TicketLifecycleService:
         )
         return await self._create(
             org_id=org_id, discord_guild_id=discord_guild_id, discord_channel_id=discord_channel_id, title=title,
-            opener=opener, actor_user_id=actor_user_id,
+            opener=opener, actor_user_id=actor_user_id, category_id=category_id,
         )
 
     async def close_ticket(
@@ -168,14 +173,15 @@ class TicketLifecycleService:
             return _to_dto(ticket)
 
     async def create_ticket_from_bot(
-        self, *, discord_guild_id: str, discord_channel_id: str, title: str, opener: TicketActor,
+        self, *, discord_guild_id: str, discord_channel_id: str, category_id: EntityId,
+        title: str, opener: TicketActor,
     ) -> TicketDTO:
         org_id = await self._guild_resolver.resolve_org_id(discord_guild_id=discord_guild_id)
         if org_id is None:
             raise GuildNotLinkedForTicketsError(discord_guild_id)
         return await self._create(
             org_id=OrgId(org_id), discord_guild_id=discord_guild_id, discord_channel_id=discord_channel_id,
-            title=title, opener=opener, actor_user_id=None,
+            title=title, opener=opener, actor_user_id=None, category_id=category_id,
         )
 
     async def claim_ticket_from_bot(self, *, ticket_id: EntityId, claimant: TicketActor) -> TicketDTO:
@@ -194,13 +200,23 @@ class TicketLifecycleService:
 
     async def _create(
         self, *, org_id: OrgId, discord_guild_id: str, discord_channel_id: str, title: str, opener: TicketActor,
-        actor_user_id: UserId | None,
+        actor_user_id: UserId | None, category_id: EntityId | None,
     ) -> TicketDTO:
         async with self._uow_factory() as uow:
+            if category_id is not None:
+                category = await uow.ticket_categories.get_by_id(category_id)
+                if (
+                    category is None
+                    or category.org_id != org_id
+                    or category.discord_guild_id != discord_guild_id
+                    or not category.is_active
+                ):
+                    raise TicketCategoryNotFoundError(category_id)
             ticket_number = await uow.tickets.next_ticket_number(org_id)
             ticket = Ticket.create(
                 org_id=org_id, discord_guild_id=discord_guild_id, ticket_number=ticket_number,
                 discord_channel_id=discord_channel_id, title=title, opener=opener,
+                category_id=category_id,
             )
             await uow.tickets.add(ticket)
             events = ticket.pull_domain_events()
@@ -210,6 +226,7 @@ class TicketLifecycleService:
                     actor_user_id=actor_user_id, resource_type="ticket", resource_id=str(ticket.id),
                     metadata={
                         "discord_channel_id": discord_channel_id, "ticket_number": ticket_number,
+                        "category_id": str(category_id) if category_id else None,
                         "opener_discord_user_id": opener.discord_user_id,
                         "opener_user_id": str(opener.user_id) if opener.user_id else None,
                     },

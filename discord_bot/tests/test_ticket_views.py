@@ -37,10 +37,12 @@ def _bot() -> MagicMock:
     return bot
 
 
-def _ticket(status: str = "open", claimed_by: str | None = None) -> TicketData:
+def _ticket(
+    status: str = "open", claimed_by: str | None = None, category_id: str | None = "category-1",
+) -> TicketData:
     return TicketData(
         id="ticket-1", ticket_number=1, discord_channel_id="222", title="Help", status=status,
-        claimed_by_discord_user_id=claimed_by,
+        claimed_by_discord_user_id=claimed_by, category_id=category_id,
     )
 
 
@@ -161,6 +163,7 @@ async def test_form_modal_creates_a_channel_and_ticket_on_submit() -> None:
 
     interaction.guild.create_text_channel.assert_awaited_once()
     bot.api_client.create_ticket.assert_awaited_once()
+    assert bot.api_client.create_ticket.call_args.kwargs["category_id"] == "1"
     bot.api_client.add_ticket_message_by_channel.assert_awaited_once_with(
         discord_channel_id="222",
         body="My billing issue",
@@ -214,6 +217,7 @@ async def test_form_modal_deletes_the_channel_if_ticket_creation_fails() -> None
 
 async def test_control_view_claim_rejects_a_non_staff_member() -> None:
     bot = _bot()
+    bot.api_client.get_ticket_by_channel.return_value = TicketResult(ok=True, ticket=_ticket())
     view = TicketControlView(bot=bot)
     interaction = _interaction()
 
@@ -221,19 +225,78 @@ async def test_control_view_claim_rejects_a_non_staff_member() -> None:
         await view.claim.callback(interaction)
 
     interaction.response.send_message.assert_awaited_once()
-    bot.api_client.get_ticket_by_channel.assert_not_awaited()
+    bot.api_client.claim_ticket.assert_not_awaited()
+
+
+async def test_control_view_checks_only_the_tickets_category_roles() -> None:
+    bot = _bot()
+    bot.api_client.get_ticket_by_channel.return_value = TicketResult(
+        ok=True, ticket=_ticket(category_id="billing"),
+    )
+    bot.api_client.list_ticket_categories.return_value = TicketCategoriesResult(
+        ok=True,
+        categories=[
+            TicketCategoryData(
+                id="billing", name="Billing", discord_category_channel_id="10",
+                staff_discord_role_ids=["billing-staff"],
+            ),
+            TicketCategoryData(
+                id="technical", name="Technical", discord_category_channel_id="11",
+                staff_discord_role_ids=["technical-staff"],
+            ),
+        ],
+    )
+    view = TicketControlView(bot=bot)
+    interaction = _interaction()
+
+    with patch(
+        "discord_bot.views.ticket_views.has_staff_role_permission", return_value=False,
+    ) as permission_check:
+        await view.claim.callback(interaction)
+
+    permission_check.assert_called_once_with(interaction, ["billing-staff"])
+    bot.api_client.claim_ticket.assert_not_awaited()
+
+
+async def test_control_view_legacy_ticket_fails_closed_to_guild_admin_only() -> None:
+    bot = _bot()
+    bot.api_client.get_ticket_by_channel.return_value = TicketResult(
+        ok=True, ticket=_ticket(category_id=None),
+    )
+    view = TicketControlView(bot=bot)
+    interaction = _interaction()
+
+    with patch(
+        "discord_bot.views.ticket_views.has_staff_role_permission", return_value=False,
+    ) as permission_check:
+        await view.close.callback(interaction)
+
+    permission_check.assert_called_once_with(interaction, [])
+    bot.api_client.close_ticket.assert_not_awaited()
 
 
 async def test_control_view_claim_succeeds_for_a_staff_member() -> None:
     bot = _bot()
     bot.api_client.get_ticket_by_channel.return_value = TicketResult(ok=True, ticket=_ticket())
+    bot.api_client.list_ticket_categories.return_value = TicketCategoriesResult(
+        ok=True,
+        categories=[
+            TicketCategoryData(
+                id="category-1", name="Billing", discord_category_channel_id="10",
+                staff_discord_role_ids=["billing-staff"],
+            )
+        ],
+    )
     bot.api_client.claim_ticket.return_value = TicketResult(ok=True, ticket=_ticket(status="claimed", claimed_by="999"))
     view = TicketControlView(bot=bot)
     interaction = _interaction()
 
-    with patch("discord_bot.views.ticket_views.has_staff_role_permission", return_value=True):
+    with patch(
+        "discord_bot.views.ticket_views.has_staff_role_permission", return_value=True,
+    ) as permission_check:
         await view.claim.callback(interaction)
 
+    permission_check.assert_called_once_with(interaction, ["billing-staff"])
     bot.api_client.claim_ticket.assert_awaited_once_with(ticket_id="ticket-1", claimant_discord_user_id="999")
     interaction.response.send_message.assert_awaited_once()
 

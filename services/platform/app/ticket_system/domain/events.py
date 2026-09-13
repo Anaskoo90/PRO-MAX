@@ -16,6 +16,7 @@ class TicketOpened(DomainEvent):
     org_id: UUID
     discord_guild_id: str
     ticket_number: int
+    category_id: UUID | None
 
 
 class TicketClosed(DomainEvent):

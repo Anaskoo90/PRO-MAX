@@ -11,6 +11,7 @@ from uuid import UUID
 class TicketDTO:
     id: UUID
     org_id: UUID
+    category_id: UUID | None
     discord_guild_id: str
     ticket_number: int
     discord_channel_id: str

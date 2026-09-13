@@ -1,6 +1,6 @@
 import pytest
 
-from app.ticket_system.domain.entities import Ticket
+from app.ticket_system.domain.entities import Ticket, TicketCategory
 from app.ticket_system.domain.value_objects import TicketActor
 from app.platform_core.api.sorting import SortField
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
@@ -20,9 +20,15 @@ def _channel_id() -> str:
 
 async def test_add_then_get_by_id_round_trips(uow) -> None:
     org_id = OrgId(new_uuid7())
+    category = TicketCategory.create(
+        org_id=org_id, discord_guild_id=_guild_id(), name="Billing",
+        discord_category_channel_id="category-channel", staff_discord_role_ids=["billing-staff"],
+    )
+    await uow.ticket_categories.add(category)
     ticket = Ticket.create(
-        org_id=org_id, discord_guild_id=_guild_id(), ticket_number=1, discord_channel_id=_channel_id(),
-        title="Help", opener=TicketActor(discord_user_id="333"),
+        org_id=org_id, discord_guild_id=category.discord_guild_id, ticket_number=1,
+        discord_channel_id=_channel_id(), title="Help", opener=TicketActor(discord_user_id="333"),
+        category_id=category.id,
     )
     await uow.tickets.add(ticket)
     await uow.session.flush()
@@ -31,6 +37,7 @@ async def test_add_then_get_by_id_round_trips(uow) -> None:
 
     assert fetched is not None
     assert fetched.title == "Help"
+    assert fetched.category_id == category.id
     assert fetched.status.value == "open"
 
 
