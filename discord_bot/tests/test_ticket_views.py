@@ -70,13 +70,64 @@ async def test_panel_view_builds_one_button_per_category() -> None:
     assert {item.label for item in view.children} == {"Billing", "Technical"}
 
 
-async def test_panel_view_caps_at_five_buttons() -> None:
+async def test_panel_view_uses_a_select_for_more_than_five_categories() -> None:
     bot = _bot()
     categories = [TicketCategoryData(id=str(i), name=f"Cat{i}", discord_category_channel_id="10") for i in range(8)]
 
     view = TicketPanelView(bot=bot, categories=categories)
 
-    assert len(view.children) == 5
+    assert len(view.children) == 1
+    select = view.children[0]
+    assert isinstance(select, discord.ui.Select)
+    assert [option.label for option in select.options] == [f"Cat{i}" for i in range(8)]
+
+
+async def test_panel_category_select_opens_the_selected_category_form() -> None:
+    bot = _bot()
+    categories = [TicketCategoryData(id=str(i), name=f"Cat{i}", discord_category_channel_id="10") for i in range(8)]
+    view = TicketPanelView(bot=bot, categories=categories)
+    select = view.children[0]
+    select._values = ["7"]
+    interaction = _interaction()
+
+    await select.callback(interaction)
+
+    modal = interaction.response.send_modal.call_args[0][0]
+    assert isinstance(modal, TicketFormModal)
+    assert modal._category.name == "Cat7"
+
+
+async def test_panel_category_select_paginates_beyond_discords_option_limit() -> None:
+    bot = _bot()
+    categories = [TicketCategoryData(id=str(i), name=f"Cat{i}", discord_category_channel_id="10") for i in range(30)]
+    view = TicketPanelView(bot=bot, categories=categories)
+
+    first_page_select = view.children[0]
+    assert len(first_page_select.options) == 25
+    assert first_page_select.options[-1].label == "Cat24"
+    next_button = next(item for item in view.children if getattr(item, "label", None) == "Next")
+    interaction = _interaction()
+
+    await next_button.callback(interaction)
+
+    second_page_select = view.children[0]
+    assert [option.label for option in second_page_select.options] == [f"Cat{i}" for i in range(25, 30)]
+    interaction.response.edit_message.assert_awaited_once_with(view=view)
+
+
+async def test_panel_category_select_opens_a_category_from_the_second_page() -> None:
+    bot = _bot()
+    categories = [TicketCategoryData(id=str(i), name=f"Cat{i}", discord_category_channel_id="10") for i in range(30)]
+    view = TicketPanelView(bot=bot, categories=categories)
+    view.show_page(1)
+    select = view.children[0]
+    select._values = ["29"]
+    interaction = _interaction()
+
+    await select.callback(interaction)
+
+    modal = interaction.response.send_modal.call_args[0][0]
+    assert modal._category.name == "Cat29"
 
 
 async def test_category_button_opens_the_form_modal() -> None:

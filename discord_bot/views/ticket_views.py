@@ -1,6 +1,6 @@
 """
 Interactive views for the Ticket System: the panel posted in a support
-channel (one button per category), the modal collected when a member
+channel, the modal collected when a member
 opens a ticket, and the persistent per-ticket control view posted in the
 resulting channel.
 
@@ -36,11 +36,11 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("discord_bot.views.ticket_views")
 
-# Discord's own limits: 5 buttons per row, 5 rows per view. A panel with
-# more categories than this falls back to a Select — not implemented in
-# Phase 1B (categories beyond the first 5 are simply not shown yet), same
-# "grow it when a real guild needs it" discipline as everywhere else.
+# Small panels use buttons so opening a ticket remains one click. Larger
+# panels use a paginated select; Discord limits each string select to 25
+# options.
 _MAX_PANEL_BUTTONS = 5
+_MAX_SELECT_OPTIONS = 25
 
 _PERMISSION_REQUIRED_MESSAGE = "You need a configured staff role (or 'Manage Server') to do that."
 
@@ -138,6 +138,41 @@ class _CategoryButton(discord.ui.Button):
         await interaction.response.send_modal(TicketFormModal(bot=self._bot, category=self._category))
 
 
+class _CategorySelect(discord.ui.Select):
+    def __init__(
+        self, *, bot: GuildDeskBot, categories: list[TicketCategoryData], page: int, total_pages: int,
+    ) -> None:
+        page_start = page * _MAX_SELECT_OPTIONS
+        page_categories = categories[page_start : page_start + _MAX_SELECT_OPTIONS]
+        options = [
+            discord.SelectOption(label=category.name[:100], value=str(page_start + offset))
+            for offset, category in enumerate(page_categories)
+        ]
+        placeholder = "Choose a ticket category"
+        if total_pages > 1:
+            placeholder = f"{placeholder} (page {page + 1}/{total_pages})"
+        super().__init__(placeholder=placeholder, options=options, row=0)
+        self._bot = bot
+        self._categories = categories
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        category = self._categories[int(self.values[0])]
+        await interaction.response.send_modal(TicketFormModal(bot=self._bot, category=category))
+
+
+class _CategoryPageButton(discord.ui.Button):
+    def __init__(self, *, label: str, page: int, disabled: bool) -> None:
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, row=1, disabled=disabled)
+        self._page = page
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, TicketPanelView):
+            return
+        view.show_page(self._page)
+        await interaction.response.edit_message(view=view)
+
+
 class TicketPanelView(discord.ui.View):
     """Not deeply restart-persistent by design for Phase 1B: rebuilding
     this view exactly (one guild's current category set) requires
@@ -148,8 +183,28 @@ class TicketPanelView(discord.ui.View):
 
     def __init__(self, *, bot: GuildDeskBot, categories: list[TicketCategoryData]) -> None:
         super().__init__(timeout=None)
-        for category in categories[:_MAX_PANEL_BUTTONS]:
-            self.add_item(_CategoryButton(bot=bot, category=category))
+        self._bot = bot
+        self._categories = categories
+        if len(categories) <= _MAX_PANEL_BUTTONS:
+            for category in categories:
+                self.add_item(_CategoryButton(bot=bot, category=category))
+            return
+        self.show_page(0)
+
+    def show_page(self, page: int) -> None:
+        total_pages = (len(self._categories) + _MAX_SELECT_OPTIONS - 1) // _MAX_SELECT_OPTIONS
+        page = min(max(page, 0), total_pages - 1)
+        self.clear_items()
+        self.add_item(
+            _CategorySelect(
+                bot=self._bot, categories=self._categories, page=page, total_pages=total_pages,
+            )
+        )
+        if total_pages > 1:
+            self.add_item(_CategoryPageButton(label="Previous", page=page - 1, disabled=page == 0))
+            self.add_item(
+                _CategoryPageButton(label="Next", page=page + 1, disabled=page == total_pages - 1)
+            )
 
 
 class TicketTransferSelectView(discord.ui.View):
