@@ -30,6 +30,24 @@ def test_protected_route_without_authorization_header_is_rejected() -> None:
     assert response.status_code == 401
 
 
+def test_direct_user_registration_cannot_bypass_organization_invitations() -> None:
+    response = client.post(
+        "/api/v1/users/register",
+        json={
+            "org_id": str(new_uuid7()),
+            "email": "uninvited@example.com",
+            "password": "Uninvited-Password-13!",
+            "display_name": "Uninvited User",
+        },
+    )
+    assert response.status_code == 404
+
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/users/register" not in paths
+    assert "/api/v1/organizations/register" in paths
+    assert "/api/v1/invitations/accept" in paths
+
+
 def test_organization_and_team_reads_without_authorization_header_are_rejected() -> None:
     assert client.get(f"/api/v1/organizations/{_ORG_ID}").status_code == 401
     assert client.get(f"/api/v1/organizations/{_ORG_ID}/teams").status_code == 401

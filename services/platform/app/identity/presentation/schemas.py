@@ -11,13 +11,6 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
-class RegisterUserRequest(BaseModel):
-    org_id: UUID
-    email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
-    display_name: str = Field(min_length=1, max_length=200)
-
-
 class LoginRequest(BaseModel):
     # The web dashboard authenticates with org_slug (Phase 2B) rather than
     # asking users to know their organization's raw UUID; internal/API

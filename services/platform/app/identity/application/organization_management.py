@@ -9,10 +9,8 @@ must be used rather than the raw constructor so it records UserRegistered)
 by pre-generating a placeholder owner id to construct the Organization,
 then pointing it at the User's real generated id once User.register() has
 run, all within one transaction rather than a two-request flow. This is
-also the only supported way to create an organization: there is still no
-separate user-invitation flow (standing gap, restated from the Platform
-Administrator Guide) — every other member joins via an admin-issued role
-assignment after the org exists.
+also the only supported way to create an organization; every other member
+joins through OrganizationInvitationService's token-backed acceptance flow.
 """
 
 from __future__ import annotations

@@ -10,7 +10,6 @@ from app.identity.domain.exceptions import InvalidAvatarError
 from app.identity.presentation import deps
 from app.identity.presentation.authorization import require_permission
 from app.identity.presentation.schemas import (
-    RegisterUserRequest,
     UpdatePreferencesRequest,
     UpdateProfileRequest,
     UserProfileResponse,
@@ -34,17 +33,6 @@ def _to_response(dto) -> UserProfileResponse:
         avatar_storage_key=dto.avatar_storage_key,
         preferences=dto.preferences,
     )
-
-
-@router.post("/users/register", response_model=DataResponse[UserProfileResponse], status_code=201)
-async def register(
-    request: RegisterUserRequest,
-    service: UserManagementService = Depends(deps.get_user_management_service),
-) -> DataResponse[UserProfileResponse]:
-    profile = await service.register(
-        org_id=request.org_id, email=request.email, password=request.password, display_name=request.display_name
-    )
-    return DataResponse(data=_to_response(profile))
 
 
 @router.get("/users/me", response_model=DataResponse[UserProfileResponse])
