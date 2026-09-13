@@ -4,6 +4,7 @@ import pytest
 from app.discord_integration.settings import DiscordIntegrationSettings
 
 _FIELD_ENCRYPTION_KEY = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+_PRODUCTION_FIELD_ENCRYPTION_KEY = "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE="
 
 
 def _set_required_configuration(
@@ -21,8 +22,22 @@ def _set_required_configuration(
         "GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY", _FIELD_ENCRYPTION_KEY
     )
     if environment in {"staging", "production"}:
+        monkeypatch.setenv(
+            "GUILDDESK_SECRET_JWT_SIGNING_KEY",
+            "production-jwt-key-unique-0123456789",
+        )
+        monkeypatch.setenv(
+            "GUILDDESK_SECRET_TOKEN_HASH_PEPPER",
+            "production-token-pepper-unique-0123456789",
+        )
+        monkeypatch.setenv(
+            "GUILDDESK_SECRET_FIELD_ENCRYPTION_KEY",
+            _PRODUCTION_FIELD_ENCRYPTION_KEY,
+        )
         monkeypatch.setenv("CORS_ALLOWED_ORIGINS", '["https://app.example.com"]')
+        monkeypatch.setenv("WEB_APP_BASE_URL", "https://app.example.com")
         monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SMTP_START_TLS", "true")
         monkeypatch.setenv("STORAGE_BACKEND", "s3")
         monkeypatch.setenv("S3_BUCKET", "guilddesk-files")
 

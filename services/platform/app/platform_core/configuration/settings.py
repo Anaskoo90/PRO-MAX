@@ -42,6 +42,22 @@ from app.platform_core.configuration.profiles import EnvironmentProfile
 _PLATFORM_ROOT = Path(__file__).resolve().parents[3]
 _ENV_FILE = _PLATFORM_ROOT / ".env"
 
+_INSECURE_JWT_SIGNING_KEYS = frozenset(
+    {
+        "local-compose-jwt-signing-key-change-me",
+        "replace-with-at-least-32-random-characters",
+    }
+)
+_INSECURE_TOKEN_PEPPERS = frozenset(
+    {
+        "local-compose-token-hash-pepper-change-me",
+        "replace-with-at-least-32-random-characters",
+    }
+)
+_INSECURE_FIELD_ENCRYPTION_KEYS = frozenset(
+    {"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}
+)
+
 
 class PlatformSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -204,6 +220,52 @@ class PlatformSettings(BaseSettings):
             raise ValueError("smtp_host must be configured in staging/production")
         if self.environment.is_production_like and self.storage_backend != "s3":
             raise ValueError("storage_backend must be 's3' in staging/production")
+        if self.environment.is_production_like:
+            token_pepper = self.token_hash_pepper.get_secret_value()
+            field_encryption_key = self.field_encryption_key.get_secret_value()
+            if self.jwt_signing_key in _INSECURE_JWT_SIGNING_KEYS:
+                raise ValueError(
+                    "jwt_signing_key must not use a documented development placeholder "
+                    "in staging/production"
+                )
+            if token_pepper in _INSECURE_TOKEN_PEPPERS:
+                raise ValueError(
+                    "token_hash_pepper must not use a documented development placeholder "
+                    "in staging/production"
+                )
+            if field_encryption_key in _INSECURE_FIELD_ENCRYPTION_KEYS:
+                raise ValueError(
+                    "field_encryption_key must not use the documented development key "
+                    "in staging/production"
+                )
+            if self.jwt_signing_key == token_pepper:
+                raise ValueError(
+                    "jwt_signing_key and token_hash_pepper must be independent secrets"
+                )
+            if self.web_app_base_url.scheme != "https":
+                raise ValueError(
+                    "web_app_base_url must use HTTPS in staging/production"
+                )
+            if any(not origin.startswith("https://") for origin in self.cors_allowed_origins):
+                raise ValueError(
+                    "cors_allowed_origins must contain only HTTPS origins in "
+                    "staging/production"
+                )
+            if (
+                self.oauth_discord_redirect_uri is not None
+                and self.oauth_discord_redirect_uri.scheme != "https"
+            ):
+                raise ValueError(
+                    "oauth_discord_redirect_uri must use HTTPS in staging/production"
+                )
+            if self.s3_endpoint_url is not None and self.s3_endpoint_url.scheme != "https":
+                raise ValueError(
+                    "s3_endpoint_url must use HTTPS in staging/production"
+                )
+            if not self.smtp_use_ssl and not self.smtp_start_tls:
+                raise ValueError(
+                    "SMTP must use SSL or STARTTLS in staging/production"
+                )
         return self
 
 
