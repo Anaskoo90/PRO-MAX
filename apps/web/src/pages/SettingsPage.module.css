@@ -164,6 +164,17 @@
   font-weight: 600;
 }
 
+.currentSessionBadge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .sessionMeta {
   margin: 2px 0 0;
   font-size: 13px;

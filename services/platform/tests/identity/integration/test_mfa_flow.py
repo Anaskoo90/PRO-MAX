@@ -196,3 +196,60 @@ async def test_mfa_challenge_token_is_single_use(uow) -> None:
             device_info=None,
             remember_me=False,
         )
+
+
+async def test_sensitive_mfa_changes_reject_an_invalid_current_code(uow) -> None:
+    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
+    _, user = await _make_org_and_active_user(
+        uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email,
+    )
+    _, mfa_service = _make_services(uow)
+    enrollment = await mfa_service.start_totp_enrollment(user_id=user.id)
+    await mfa_service.confirm_totp_enrollment(
+        user_id=user.id, factor_id=enrollment.factor_id,
+        code=pyotp.TOTP(enrollment.secret).now(),
+    )
+
+    with pytest.raises(InvalidMfaCodeError):
+        await mfa_service.regenerate_recovery_codes(
+            user_id=user.id, code="not-a-valid-code", ip_address="127.0.0.1",
+        )
+    with pytest.raises(InvalidMfaCodeError):
+        await mfa_service.disable_mfa(
+            user_id=user.id, code="not-a-valid-code", ip_address="127.0.0.1",
+        )
+
+    persisted_user = await uow.users.get_by_id(user.id)
+    assert persisted_user.mfa_enabled is True
+    assert len(await uow.mfa_factors.list_for_user(user.id)) == 11
+
+
+async def test_sensitive_mfa_changes_accept_a_current_factor(uow) -> None:
+    email = f"owner-{uuid.uuid4().hex[:12]}@example.com"
+    _, user = await _make_org_and_active_user(
+        uow, slug=f"acme-{uuid.uuid4().hex[:12]}", email=email,
+    )
+    _, mfa_service = _make_services(uow)
+    enrollment = await mfa_service.start_totp_enrollment(user_id=user.id)
+    old_codes = await mfa_service.confirm_totp_enrollment(
+        user_id=user.id, factor_id=enrollment.factor_id,
+        code=pyotp.TOTP(enrollment.secret).now(),
+    )
+
+    new_codes = await mfa_service.regenerate_recovery_codes(
+        user_id=user.id, code=old_codes[0], ip_address="127.0.0.1",
+    )
+    assert len(new_codes) == 10
+    assert set(new_codes).isdisjoint(old_codes)
+    with pytest.raises(InvalidMfaCodeError):
+        await mfa_service.regenerate_recovery_codes(
+            user_id=user.id, code=old_codes[0], ip_address="127.0.0.1",
+        )
+
+    await mfa_service.disable_mfa(
+        user_id=user.id, code=pyotp.TOTP(enrollment.secret).now(),
+        ip_address="127.0.0.1",
+    )
+    persisted_user = await uow.users.get_by_id(user.id)
+    assert persisted_user.mfa_enabled is False
+    assert await uow.mfa_factors.list_for_user(user.id) == []

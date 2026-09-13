@@ -118,15 +118,16 @@ export function createAuthApi(client: ApiClient) {
       return response.data;
     },
 
-    async regenerateRecoveryCodes(): Promise<RecoveryCodes> {
+    async regenerateRecoveryCodes(code: string): Promise<RecoveryCodes> {
       const response = await client.post<DataResponse<RecoveryCodes>>(
         "/api/v1/users/me/mfa/recovery-codes/regenerate",
+        { code },
       );
       return response.data;
     },
 
-    async disableMfa(): Promise<void> {
-      await client.post<void>("/api/v1/users/me/mfa/disable");
+    async disableMfa(code: string): Promise<void> {
+      await client.post<void>("/api/v1/users/me/mfa/disable", { code });
     },
 
     async listSessions(): Promise<Session[]> {

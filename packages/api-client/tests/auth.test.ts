@@ -115,8 +115,10 @@ describe("auth api", () => {
     mockFetchOnce({ data: { recovery_codes: ["NEW-1", "NEW-2"] } });
     const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
 
-    const codes = await auth.regenerateRecoveryCodes();
+    const codes = await auth.regenerateRecoveryCodes("654321");
 
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ code: "654321" });
     expect(codes.recovery_codes).toEqual(["NEW-1", "NEW-2"]);
   });
 
@@ -124,11 +126,12 @@ describe("auth api", () => {
     const fetchMock = mockFetchOnce(undefined, 204);
     const auth = createAuthApi(new ApiClient({ baseUrl: "http://api.test" }));
 
-    await auth.disableMfa();
+    await auth.disableMfa("recovery-code");
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://api.test/api/v1/users/me/mfa/disable");
     expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ code: "recovery-code" });
   });
 
   it("unwraps the DataResponse envelope for listSessions", async () => {

@@ -9,6 +9,7 @@ from app.identity.application.mfa import MfaService
 from app.identity.presentation import deps
 from app.identity.presentation.schemas import (
     ConfirmTotpEnrollmentRequest,
+    CurrentMfaCodeRequest,
     RecoveryCodesResponse,
     TokenResponse,
     TotpEnrollmentResponse,
@@ -57,19 +58,29 @@ async def confirm_totp_enrollment(
 
 @router.post("/users/me/mfa/recovery-codes/regenerate", response_model=DataResponse[RecoveryCodesResponse])
 async def regenerate_recovery_codes(
+    request: CurrentMfaCodeRequest,
+    http_request: Request,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: MfaService = Depends(deps.get_mfa_service),
 ) -> DataResponse[RecoveryCodesResponse]:
-    codes = await service.regenerate_recovery_codes(user_id=claims.subject_user_id)
+    codes = await service.regenerate_recovery_codes(
+        user_id=claims.subject_user_id, code=request.code,
+        ip_address=http_request.client.host if http_request.client is not None else "unknown",
+    )
     return DataResponse(data=RecoveryCodesResponse(recovery_codes=codes))
 
 
 @router.post("/users/me/mfa/disable", status_code=204)
 async def disable_mfa(
+    request: CurrentMfaCodeRequest,
+    http_request: Request,
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: MfaService = Depends(deps.get_mfa_service),
 ) -> None:
-    await service.disable_mfa(user_id=claims.subject_user_id)
+    await service.disable_mfa(
+        user_id=claims.subject_user_id, code=request.code,
+        ip_address=http_request.client.host if http_request.client is not None else "unknown",
+    )
 
 
 @router.post("/auth/mfa/verify", response_model=DataResponse[TokenResponse])

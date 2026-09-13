@@ -150,16 +150,16 @@ describe("SettingsPage", () => {
     });
     vi.mocked(api.auth.listSessions).mockResolvedValue([]);
     vi.mocked(api.auth.disableMfa).mockResolvedValue(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     render(<SettingsPage />);
     await screen.findByDisplayValue("Acme Guild");
     await user.click(screen.getByRole("button", { name: "Security" }));
 
     expect(await screen.findByText("enabled")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Disable two-factor authentication" }));
+    await user.type(screen.getByLabelText("Authenticator or recovery code"), "123456");
+    await user.click(screen.getByRole("button", { name: "Confirm disable" }));
 
-    await waitFor(() => expect(api.auth.disableMfa).toHaveBeenCalled());
+    await waitFor(() => expect(api.auth.disableMfa).toHaveBeenCalledWith("123456"));
     expect(await screen.findByText("disabled")).toBeInTheDocument();
   });
 
@@ -182,6 +182,25 @@ describe("SettingsPage", () => {
 
     await waitFor(() => expect(api.auth.revokeSession).toHaveBeenCalledWith("s1"));
     expect(screen.queryByText("Chrome on macOS")).not.toBeInTheDocument();
+  });
+
+  it("identifies the current session without offering a misleading revoke action", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.organizations.get).mockResolvedValue(SAMPLE_ORG);
+    vi.mocked(api.auth.getMyProfile).mockResolvedValue({
+      id: "u1", org_id: "org-1", email: "a@b.com", display_name: "A", status: "active", mfa_enabled: false,
+    });
+    vi.mocked(api.auth.listSessions).mockResolvedValue([
+      { ...SAMPLE_SESSION, is_current: true },
+    ]);
+
+    render(<SettingsPage />);
+    await screen.findByDisplayValue("Acme Guild");
+    await user.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(await screen.findByText("This device")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Current session" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument();
   });
 
   it("shows an empty state when there are no active sessions", async () => {

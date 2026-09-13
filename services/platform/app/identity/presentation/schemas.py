@@ -118,6 +118,10 @@ class ConfirmTotpEnrollmentRequest(BaseModel):
     code: str
 
 
+class CurrentMfaCodeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+
+
 class RecoveryCodesResponse(BaseModel):
     recovery_codes: list[str]
 

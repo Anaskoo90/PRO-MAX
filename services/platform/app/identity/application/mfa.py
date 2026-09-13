@@ -127,9 +127,15 @@ class MfaService:
             await self._dispatcher.dispatch_all(events)
             return raw_codes
 
-    async def regenerate_recovery_codes(self, *, user_id: EntityId) -> list[str]:
+    async def regenerate_recovery_codes(
+        self, *, user_id: EntityId, code: str, ip_address: str,
+    ) -> list[str]:
+        await self._attempt_guard.check(
+            ip_address=ip_address, scope=f"mfa_management:{user_id}",
+        )
         async with self._uow_factory() as uow:
             existing = await uow.mfa_factors.list_for_user(user_id)
+            self._require_current_code(existing, code)
             for factor in existing:
                 if factor.factor_type == MfaFactorType.RECOVERY_CODE:
                     await uow.mfa_factors.delete(factor.id)
@@ -141,9 +147,15 @@ class MfaService:
             await uow.commit()
             return raw_codes
 
-    async def disable_mfa(self, *, user_id: EntityId) -> None:
+    async def disable_mfa(
+        self, *, user_id: EntityId, code: str, ip_address: str,
+    ) -> None:
+        await self._attempt_guard.check(
+            ip_address=ip_address, scope=f"mfa_management:{user_id}",
+        )
         async with self._uow_factory() as uow:
             factors = await uow.mfa_factors.list_for_user(user_id)
+            self._require_current_code(factors, code)
             for factor in factors:
                 await uow.mfa_factors.delete(factor.id)
 
@@ -160,6 +172,40 @@ class MfaService:
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
+
+    def _require_current_code(self, factors: list[MfaFactor], code: str) -> MfaFactor:
+        totp_factor = next(
+            (
+                factor
+                for factor in factors
+                if factor.factor_type == MfaFactorType.TOTP
+                and factor.is_verified()
+                and factor.secret_encrypted
+            ),
+            None,
+        )
+        if totp_factor is not None:
+            secret = self._encryption.decrypt(totp_factor.secret_encrypted)
+            if pyotp.TOTP(secret).verify(code, valid_window=1):
+                return totp_factor
+
+        code_hash = hash_for_lookup(
+            code, secret_pepper=self._recovery_code_pepper,
+        )
+        recovery_factor = next(
+            (
+                factor
+                for factor in factors
+                if factor.factor_type == MfaFactorType.RECOVERY_CODE
+                and factor.recovery_code_hash == code_hash
+            ),
+            None,
+        )
+        if recovery_factor is None:
+            raise InvalidMfaCodeError()
+        if recovery_factor.is_consumed():
+            raise RecoveryCodeAlreadyUsedError()
+        return recovery_factor
 
     async def verify_mfa_challenge(
         self,

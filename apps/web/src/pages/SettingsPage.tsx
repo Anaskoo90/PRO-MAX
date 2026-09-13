@@ -36,6 +36,8 @@ export function SettingsPage() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [mfaActionError, setMfaActionError] = useState<string | null>(null);
   const [isMfaActionPending, setIsMfaActionPending] = useState(false);
+  const [isDisableMfaOpen, setIsDisableMfaOpen] = useState(false);
+  const [disableMfaCode, setDisableMfaCode] = useState("");
 
   // --- Security tab: sessions ---------------------------------------------
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -135,14 +137,17 @@ export function SettingsPage() {
     }
   }
 
-  async function handleDisableMfa(): Promise<void> {
-    if (!window.confirm("Turn off two-factor authentication for your account?")) return;
+  async function handleDisableMfa(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!disableMfaCode.trim()) return;
     setMfaActionError(null);
     setIsMfaActionPending(true);
     try {
-      await api.auth.disableMfa();
+      await api.auth.disableMfa(disableMfaCode.trim());
       setMfaEnabled(false);
       setRecoveryCodes(null);
+      setDisableMfaCode("");
+      setIsDisableMfaOpen(false);
     } catch (err) {
       setMfaActionError(err instanceof ApiRequestError ? err.message : "Couldn't disable MFA.");
     } finally {
@@ -301,9 +306,40 @@ export function SettingsPage() {
                   <div>
                     <p>Two-factor authentication is currently <strong>enabled</strong> for your account.</p>
                     {mfaActionError && <ErrorState message={mfaActionError} />}
-                    <button type="button" onClick={() => void handleDisableMfa()} disabled={isMfaActionPending}>
-                      {isMfaActionPending ? "Disabling…" : "Disable two-factor authentication"}
-                    </button>
+                    {isDisableMfaOpen ? (
+                      <form className={styles.form} onSubmit={(event) => void handleDisableMfa(event)}>
+                        <label className={styles.field}>
+                          Authenticator or recovery code
+                          <input
+                            value={disableMfaCode}
+                            onChange={(event) => setDisableMfaCode(event.target.value)}
+                            autoComplete="one-time-code"
+                            inputMode="numeric"
+                            autoFocus
+                            required
+                          />
+                        </label>
+                        <div className={styles.inlineActions}>
+                          <button type="submit" disabled={isMfaActionPending || !disableMfaCode.trim()}>
+                            {isMfaActionPending ? "Disabling…" : "Confirm disable"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsDisableMfaOpen(false);
+                              setDisableMfaCode("");
+                            }}
+                            disabled={isMfaActionPending}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button type="button" onClick={() => setIsDisableMfaOpen(true)}>
+                        Disable two-factor authentication
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div>
@@ -329,7 +365,10 @@ export function SettingsPage() {
                     {sessions.map((session) => (
                       <li key={session.id} className={styles.sessionItem}>
                         <div>
-                          <p className={styles.sessionDevice}>{session.device_label || "Unknown device"}</p>
+                          <p className={styles.sessionDevice}>
+                            {session.device_label || "Unknown device"}
+                            {session.is_current && <span className={styles.currentSessionBadge}>This device</span>}
+                          </p>
                           <p className={styles.sessionMeta}>
                             {session.ip_address} · signed in {new Date(session.created_at).toLocaleString()}
                           </p>
@@ -337,17 +376,20 @@ export function SettingsPage() {
                         <button
                           type="button"
                           onClick={() => void handleRevokeSession(session)}
-                          disabled={revokingSessionId === session.id}
+                          disabled={session.is_current || revokingSessionId === session.id}
                         >
-                          {revokingSessionId === session.id ? "Revoking…" : "Revoke"}
+                          {session.is_current
+                            ? "Current session"
+                            : revokingSessionId === session.id
+                              ? "Revoking…"
+                              : "Revoke"}
                         </button>
                       </li>
                     ))}
                   </ul>
                 )}
                 <p className={styles.hint}>
-                  Sessions aren't currently flagged as "this device" — if you're unsure which one you're using, sign
-                  out from the General tab instead of guessing here.
+                  To end this device's current session, use sign out. Other sessions can be revoked here.
                 </p>
               </section>
             </div>
