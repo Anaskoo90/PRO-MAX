@@ -30,10 +30,18 @@ from app.platform_core.di.container import ServiceContainer
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
-from app.ticket_system.infrastructure.discord_integration_adapter import DiscordIntegrationGuildResolverAdapter
+from app.ticket_system.domain.audit import TicketAuditEventCategory
+from app.ticket_system.infrastructure.discord_integration_adapter import (
+    DiscordIntegrationGuildResolverAdapter,
+)
 from app.ticket_system.infrastructure.seed_data import TICKET_PERMISSION_CATALOG
 from app.ticket_system.infrastructure.unit_of_work import TicketUnitOfWork
-from app.ticket_system.presentation import deps, ticket_bot_router, ticket_categories_router, tickets_router
+from app.ticket_system.presentation import (
+    deps,
+    ticket_bot_router,
+    ticket_categories_router,
+    tickets_router,
+)
 
 
 class TicketSystemModule:
@@ -53,6 +61,11 @@ class TicketSystemModule:
             return TicketUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="ticket_system",
+            uow_factory=uow_factory,
+            category_type=TicketAuditEventCategory,
+        )
 
         # --- Cross-context wiring (composition root only) ---
         permission_checker = identity_module.permission_evaluator

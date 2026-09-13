@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 
 from app.identity.application.security import (
     AuditLogQueryService,
     SecurityService,
     fingerprint_device,
 )
-from app.identity.domain.audit import AuditEventCategory
 from app.identity.presentation import deps
 from app.identity.presentation.authorization import (
     assert_path_org_matches_claims,
@@ -74,8 +73,9 @@ async def revoke_trusted_device(
 )
 async def list_audit_logs(
     org_id: str,
-    category: AuditEventCategory | None = None,
-    limit: int = 50,
+    category: str | None = None,
+    source: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: AuditLogQueryService = Depends(deps.get_audit_log_query_service),
 ) -> DataResponse[list[AuditLogResponse]]:
@@ -83,12 +83,14 @@ async def list_audit_logs(
     records = await service.list_for_org(
         org_id=authenticated_org_id,
         category=category,
+        source=source,
         limit=limit,
     )
     return DataResponse(
         data=[
             AuditLogResponse(
-                id=r.id, org_id=r.org_id, category=r.category.value, action=r.action, actor_user_id=r.actor_user_id,
+                id=r.id, org_id=r.org_id, source=r.source, category=r.category, action=r.action,
+                actor_user_id=r.actor_user_id,
                 resource_type=r.resource_type, resource_id=r.resource_id, ip_address=r.ip_address,
                 metadata=r.metadata, occurred_at=r.occurred_at,
             )

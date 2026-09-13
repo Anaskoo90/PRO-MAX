@@ -22,6 +22,7 @@ from app.projects.application.membership_management import ProjectMembershipServ
 from app.projects.application.project_management import ProjectService
 from app.projects.application.template_management import ProjectTemplateService
 from app.projects.application.workspace_management import WorkspaceService
+from app.projects.domain.audit import ProjectsAuditEventCategory
 from app.projects.infrastructure.identity_adapter import IdentityUserDirectoryAdapter
 from app.projects.infrastructure.seed_data import PROJECTS_PERMISSION_CATALOG
 from app.projects.infrastructure.unit_of_work import ProjectsUnitOfWork
@@ -49,6 +50,11 @@ class ProjectsModule:
             return ProjectsUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="projects",
+            uow_factory=uow_factory,
+            category_type=ProjectsAuditEventCategory,
+        )
 
         # Cross-context wiring: Identity's PermissionEvaluator satisfies
         # OrgPermissionCheckerPort structurally, no adapter class needed.

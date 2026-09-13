@@ -21,15 +21,6 @@ from __future__ import annotations
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.identity.composition import IdentityModule
-from app.platform_core.configuration.settings import PlatformSettings
-from app.platform_core.di.container import ServiceContainer
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.jobs.executor import JobExecutor
-from app.platform_core.jobs.scheduler import JobDefinition, JobScheduler
-from app.platform_core.logging.logger import get_logger
-from app.projects.composition import ProjectsModule
-from app.tasks.composition import TasksModule
 from app.boards.application.backlog_management import BacklogService
 from app.boards.application.board_management import BoardService
 from app.boards.application.card_movement import CardMovementService
@@ -38,6 +29,7 @@ from app.boards.application.estimate_management import EstimateService
 from app.boards.application.sprint_management import SprintService
 from app.boards.application.sprint_reporting import SprintReportingService
 from app.boards.application.swimlane_management import SwimlaneService
+from app.boards.domain.audit import BoardsAuditEventCategory
 from app.boards.infrastructure.projects_adapter import ProjectsProjectContextAdapter
 from app.boards.infrastructure.seed_data import BOARDS_PERMISSION_CATALOG
 from app.boards.infrastructure.tasks_adapter import TasksTaskContextAdapter
@@ -51,6 +43,15 @@ from app.boards.presentation import (
     sprints_router,
     swimlanes_router,
 )
+from app.identity.composition import IdentityModule
+from app.platform_core.configuration.settings import PlatformSettings
+from app.platform_core.di.container import ServiceContainer
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.jobs.executor import JobExecutor
+from app.platform_core.jobs.scheduler import JobDefinition, JobScheduler
+from app.platform_core.logging.logger import get_logger
+from app.projects.composition import ProjectsModule
+from app.tasks.composition import TasksModule
 
 _logger = get_logger("boards.composition")
 _BURNDOWN_SNAPSHOT_INTERVAL_SECONDS = 86400.0
@@ -73,6 +74,11 @@ class BoardsModule:
             return BoardsUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="boards",
+            uow_factory=uow_factory,
+            category_type=BoardsAuditEventCategory,
+        )
 
         # --- Cross-context wiring (composition root only) ---
         permission_checker = identity_module.permission_evaluator

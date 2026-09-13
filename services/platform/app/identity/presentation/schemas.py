@@ -308,6 +308,7 @@ class TrustedDeviceResponse(BaseModel):
 class AuditLogResponse(BaseModel):
     id: UUID
     org_id: UUID
+    source: str
     category: str
     action: str
     actor_user_id: UUID | None

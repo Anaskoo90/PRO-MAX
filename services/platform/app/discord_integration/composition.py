@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.discord_integration.application.discord_setup import DiscordSetupService
+from app.discord_integration.domain.audit import DiscordAuditEventCategory
 from app.discord_integration.infrastructure.identity_adapter import (
     IdentityOrganizationLookupAdapter,
 )
@@ -46,6 +47,11 @@ class DiscordIntegrationModule:
             return DiscordIntegrationUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="discord_integration",
+            uow_factory=uow_factory,
+            category_type=DiscordAuditEventCategory,
+        )
 
         # --- Cross-context wiring (composition root only) ---
         permission_checker = identity_module.permission_evaluator

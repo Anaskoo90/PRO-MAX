@@ -286,7 +286,9 @@ def test_audit_log_route_allows_authorized_same_tenant_query() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"data": []}
-    assert service.calls == [{"org_id": org_id, "category": None, "limit": 50}]
+    assert service.calls == [
+        {"org_id": org_id, "category": None, "source": None, "limit": 50}
+    ]
 
 
 _ORG_ID = "00000000-0000-0000-0000-000000000000"

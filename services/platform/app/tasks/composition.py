@@ -40,6 +40,7 @@ from app.tasks.application.task_query_service import TaskQueryService
 from app.tasks.application.task_relationships import TaskRelationshipService
 from app.tasks.application.task_scheduling import TaskSchedulingService
 from app.tasks.application.workflow_management import WorkflowService
+from app.tasks.domain.audit import TasksAuditEventCategory
 from app.tasks.infrastructure.projects_adapter import ProjectsProjectContextAdapter
 from app.tasks.infrastructure.seed_data import TASKS_PERMISSION_CATALOG
 from app.tasks.infrastructure.unit_of_work import TasksUnitOfWork
@@ -72,6 +73,11 @@ class TasksModule:
             return TasksUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="tasks",
+            uow_factory=uow_factory,
+            category_type=TasksAuditEventCategory,
+        )
 
         # --- Cross-context wiring (composition root only) ---
         permission_checker = identity_module.permission_evaluator

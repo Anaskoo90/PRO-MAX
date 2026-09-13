@@ -44,6 +44,7 @@ from app.workflow_engine.application.rule_evaluation import RuleEvaluator
 from app.workflow_engine.application.state_management import WorkflowStateService
 from app.workflow_engine.application.transition_management import WorkflowTransitionService
 from app.workflow_engine.application.workflow_management import WorkflowService
+from app.workflow_engine.domain.audit import WorkflowAuditEventCategory
 from app.workflow_engine.infrastructure.boards_adapter import BoardsWorkflowContextAdapter
 from app.workflow_engine.infrastructure.projects_adapter import ProjectsWorkflowContextAdapter
 from app.workflow_engine.infrastructure.seed_data import WORKFLOW_PERMISSION_CATALOG
@@ -80,6 +81,11 @@ class WorkflowEngineModule:
             return WorkflowEngineUnitOfWork(self._session_factory)
 
         self._uow_factory = uow_factory
+        identity_module.audit_log_query_service.register_source(
+            source="workflow_engine",
+            uow_factory=uow_factory,
+            category_type=WorkflowAuditEventCategory,
+        )
 
         # --- Cross-context wiring (composition root only) ---
         permission_checker = identity_module.permission_evaluator

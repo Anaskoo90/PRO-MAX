@@ -10,11 +10,13 @@ module only adds what Authentication didn't already cover.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from enum import StrEnum
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
@@ -180,15 +182,124 @@ class SuspiciousLoginDetector:
             return bool(known_ips) and ip_address not in known_ips
 
 
+@dataclass(frozen=True, slots=True)
+class AuditLogEntryDTO:
+    id: UUID
+    org_id: UUID
+    source: str
+    category: str
+    action: str
+    actor_user_id: UUID | None
+    resource_type: str
+    resource_id: str
+    ip_address: str | None
+    metadata: dict[str, Any]
+    occurred_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditLogSource:
+    uow_factory: Any
+    category_type: type[StrEnum]
+
+
 class AuditLogQueryService:
+    """Federated read model over each context's append-only audit table.
+
+    Writes stay inside their owning bounded context and schema. Composition
+    roots register their read source here, preserving schema ownership while
+    giving the organization audit endpoint one complete chronological view.
+    """
+
     def __init__(self, *, uow_factory) -> None:
-        self._uow_factory = uow_factory
+        self._sources: dict[str, _AuditLogSource] = {}
+        self.register_source(
+            source="identity",
+            uow_factory=uow_factory,
+            category_type=AuditEventCategory,
+        )
+
+    def register_source(
+        self,
+        *,
+        source: str,
+        uow_factory,
+        category_type: type[StrEnum],
+    ) -> None:
+        if source in self._sources:
+            raise ValueError(f"Audit log source '{source}' is already registered")
+        self._sources[source] = _AuditLogSource(
+            uow_factory=uow_factory,
+            category_type=category_type,
+        )
 
     async def list_for_org(
-        self, *, org_id: OrgId, category: AuditEventCategory | None = None, limit: int = 50
-    ) -> list[AuditLogRecord]:
-        async with self._uow_factory() as uow:
-            return await uow.audit_logs.list_for_org(org_id, category=category, limit=limit)
+        self,
+        *,
+        org_id: OrgId,
+        category: str | None = None,
+        source: str | None = None,
+        limit: int = 50,
+    ) -> list[AuditLogEntryDTO]:
+        selected_sources = [
+            (source_name, audit_source)
+            for source_name, audit_source in self._sources.items()
+            if source is None or source_name == source
+        ]
+        pages = await asyncio.gather(
+            *(
+                self._load_source(
+                    source_name=source_name,
+                    audit_source=audit_source,
+                    org_id=org_id,
+                    category=category,
+                    limit=limit,
+                )
+                for source_name, audit_source in selected_sources
+            )
+        )
+        records = [record for page in pages for record in page]
+        records.sort(key=lambda record: record.occurred_at, reverse=True)
+        return records[:limit]
+
+    @staticmethod
+    async def _load_source(
+        *,
+        source_name: str,
+        audit_source: _AuditLogSource,
+        org_id: OrgId,
+        category: str | None,
+        limit: int,
+    ) -> list[AuditLogEntryDTO]:
+        category_filter: StrEnum | None = None
+        if category is not None:
+            try:
+                category_filter = audit_source.category_type(category)
+            except ValueError:
+                return []
+
+        async with audit_source.uow_factory() as uow:
+            source_records = await uow.audit_logs.list_for_org(
+                org_id,
+                category=category_filter,
+                limit=limit,
+            )
+        return [
+            AuditLogEntryDTO(
+                id=record.id,
+                org_id=record.org_id,
+                source=source_name,
+                category=record.category.value,
+                action=record.action,
+                actor_user_id=record.actor_user_id,
+                resource_type=record.resource_type,
+                resource_id=record.resource_id,
+                ip_address=getattr(record, "ip_address", None),
+                metadata=record.metadata,
+                occurred_at=record.occurred_at,
+            )
+            for record in source_records
+        ]
 
 
 class SecurityService:
