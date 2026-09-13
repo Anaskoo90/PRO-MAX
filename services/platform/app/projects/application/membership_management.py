@@ -102,8 +102,10 @@ class ProjectMembershipService:
         await self._notification_dispatcher.dispatch(
             NotificationRequest(
                 org_id=project.org_id, channel=NotificationChannel.EMAIL, recipient=target_user.email,
+                recipient_user_id=target_user.id,
                 subject=f"You've been invited to the project '{project.name}'",
                 body=f"You were invited as {role.value} on '{project.name}'. Sign in to GuildDesk to accept.",
+                in_app_body=f"You were invited as {role.value} on '{project.name}'.",
             )
         )
         return _to_dto(membership)

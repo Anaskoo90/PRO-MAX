@@ -86,8 +86,10 @@ class TaskAssignmentService:
             await self._notification_dispatcher.dispatch(
                 NotificationRequest(
                     org_id=org_id, channel=NotificationChannel.EMAIL, recipient=user.email,
+                    recipient_user_id=user.id,
                     subject=f"You've been assigned to '{task_title}'",
                     body=f"You were assigned to the task '{task_title}'. Sign in to GuildDesk to view it.",
+                    in_app_body=f"You were assigned to the task '{task_title}'.",
                 )
             )
         except NoProviderRegisteredError:

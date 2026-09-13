@@ -370,9 +370,11 @@ class SuspiciousLoginNotifier:
                     org_id=user.org_id,
                     channel=NotificationChannel.EMAIL,
                     recipient=str(user.email),
+                    recipient_user_id=user.id,
                     subject="New sign-in to your GuildDesk account",
                     body=f"A new sign-in was detected from IP address {event.ip_address}. "
                     "If this wasn't you, reset your password immediately.",
+                    in_app_body=f"A new sign-in was detected from IP address {event.ip_address}.",
                 )
             )
         except NoProviderRegisteredError:

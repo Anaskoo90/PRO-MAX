@@ -126,6 +126,7 @@ class PasswordManagementService:
                     org_id=org_id,
                     channel=NotificationChannel.EMAIL,
                     recipient=email,
+                    recipient_user_id=user.id,
                     subject="Reset your GuildDesk password",
                     body=f"{self._reset_link_base_url}?token={raw_token}",
                 )

@@ -23,6 +23,23 @@ class _RecordingEmailProvider:
         self.sent.append(message)
 
 
+class _RecordingDeliveryRecorder:
+    def __init__(self) -> None:
+        self.requests = []
+        self.delivered = []
+
+    async def begin(self, request):
+        notification_id = new_uuid7()
+        self.requests.append(request)
+        return notification_id
+
+    async def mark_delivered(self, notification_id) -> None:
+        self.delivered.append(notification_id)
+
+    async def mark_failed(self, notification_id, *, failure_type: str) -> None:
+        raise AssertionError(f"Unexpected notification failure: {failure_type}")
+
+
 @pytest.mark.asyncio
 async def test_send_notification_action_delivers_through_the_wired_email_provider() -> None:
     recipient_id = UserId(new_uuid7())
@@ -102,6 +119,98 @@ async def test_send_notification_action_rejects_a_cross_tenant_recipient() -> No
             workflow_id=EntityId(new_uuid7()),
             task_id=EntityId(new_uuid7()),
             org_id=OrgId(new_uuid7()),
+            actor_user_id=UserId(new_uuid7()),
+        )
+
+    assert email_provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_notification_action_supports_durable_in_app_delivery() -> None:
+    recipient_id = UserId(new_uuid7())
+    org_id = OrgId(new_uuid7())
+    recorder = _RecordingDeliveryRecorder()
+    executor = ActionExecutor(
+        tasks_context=FakeTasksContext(),
+        notification_dispatcher=NotificationDispatcher(delivery_recorder=recorder),
+        user_directory=FakeUserDirectory(
+            {
+                recipient_id: UserSummary(
+                    id=recipient_id,
+                    org_id=org_id,
+                    email="recipient@example.com",
+                    display_name="Recipient",
+                )
+            }
+        ),
+        webhook_executor=FakeWebhookExecutor(),
+    )
+    action = WorkflowAction.create(
+        transition_id=EntityId(new_uuid7()),
+        action_type=ActionType.SEND_NOTIFICATION,
+        config={
+            "recipient_user_id": str(recipient_id),
+            "channel": "in_app",
+            "subject": "Workflow moved",
+            "body": "The task is ready.",
+        },
+        position=1024.0,
+    )
+
+    await executor.execute(
+        object(),
+        action,
+        workflow_id=EntityId(new_uuid7()),
+        task_id=EntityId(new_uuid7()),
+        org_id=org_id,
+        actor_user_id=UserId(new_uuid7()),
+    )
+
+    assert len(recorder.requests) == 1
+    assert recorder.requests[0].channel.value == "in_app"
+    assert recorder.requests[0].recipient_user_id == recipient_id
+    assert recorder.requests[0].in_app_body == "The task is ready."
+    assert len(recorder.delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_send_notification_action_rejects_channels_without_recipient_addresses() -> None:
+    recipient_id = UserId(new_uuid7())
+    org_id = OrgId(new_uuid7())
+    email_provider = _RecordingEmailProvider()
+    executor = ActionExecutor(
+        tasks_context=FakeTasksContext(),
+        notification_dispatcher=NotificationDispatcher(email_provider=email_provider),
+        user_directory=FakeUserDirectory(
+            {
+                recipient_id: UserSummary(
+                    id=recipient_id,
+                    org_id=org_id,
+                    email="recipient@example.com",
+                    display_name="Recipient",
+                )
+            }
+        ),
+        webhook_executor=FakeWebhookExecutor(),
+    )
+    action = WorkflowAction.create(
+        transition_id=EntityId(new_uuid7()),
+        action_type=ActionType.SEND_NOTIFICATION,
+        config={
+            "recipient_user_id": str(recipient_id),
+            "channel": "sms",
+            "body": "The task is ready.",
+        },
+        position=1024.0,
+    )
+
+    with pytest.raises(ValueError, match="only email and in_app"):
+        await executor.execute(
+            object(),
+            action,
+            workflow_id=EntityId(new_uuid7()),
+            task_id=EntityId(new_uuid7()),
+            org_id=org_id,
             actor_user_id=UserId(new_uuid7()),
         )
 

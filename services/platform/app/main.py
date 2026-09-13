@@ -4,9 +4,7 @@ single FastAPI application.
 
 Each bounded context's composition module (e.g. app.identity.composition)
 exposes `register(container)` + `mount(app)`, following the
-ModuleRegistration protocol in platform_core.di.registration. Contexts
-beyond Identity, Projects & Workspaces, and Tasks & Work Management (CRM,
-Ticketing, ...) are not implemented yet.
+ModuleRegistration protocol in platform_core.di.registration.
 """
 
 from __future__ import annotations
@@ -40,16 +38,27 @@ container = ServiceContainer()
 lifecycle = LifecycleManager()
 health_registry = HealthCheckRegistry()
 
+from app.boards.composition import BOARDS_PERMISSION_CATALOG, BoardsModule  # noqa: E402
+from app.discord_integration.composition import (  # noqa: E402
+    DISCORD_PERMISSION_CATALOG,
+    DiscordIntegrationModule,
+)
+from app.discord_integration.settings import DiscordIntegrationSettings  # noqa: E402
 from app.identity.composition import IdentityModule  # noqa: E402  (after settings/logging setup)
+from app.notifications.composition import NotificationsModule  # noqa: E402
 from app.projects.composition import PROJECTS_PERMISSION_CATALOG, ProjectsModule  # noqa: E402
 from app.tasks.composition import TASKS_PERMISSION_CATALOG, TasksModule  # noqa: E402
-from app.boards.composition import BOARDS_PERMISSION_CATALOG, BoardsModule  # noqa: E402
-from app.workflow_engine.composition import WORKFLOW_PERMISSION_CATALOG, WorkflowEngineModule  # noqa: E402
-from app.discord_integration.composition import DISCORD_PERMISSION_CATALOG, DiscordIntegrationModule  # noqa: E402
-from app.discord_integration.settings import DiscordIntegrationSettings  # noqa: E402
-from app.ticket_system.composition import TICKET_PERMISSION_CATALOG, TicketSystemModule  # noqa: E402
+from app.ticket_system.composition import (  # noqa: E402
+    TICKET_PERMISSION_CATALOG,
+    TicketSystemModule,
+)
+from app.workflow_engine.composition import (  # noqa: E402
+    WORKFLOW_PERMISSION_CATALOG,
+    WorkflowEngineModule,
+)
 
 identity_module = IdentityModule(settings)
+notifications_module = NotificationsModule(settings, identity_module)
 projects_module = ProjectsModule(settings, identity_module)
 tasks_module = TasksModule(settings, identity_module, projects_module)
 boards_module = BoardsModule(settings, identity_module, projects_module, tasks_module)
@@ -131,6 +140,8 @@ def create_app() -> FastAPI:
 
     identity_module.register(container)
     identity_module.mount(app)
+    notifications_module.register(container)
+    notifications_module.mount(app)
     projects_module.register(container)
     projects_module.mount(app)
     tasks_module.register(container)

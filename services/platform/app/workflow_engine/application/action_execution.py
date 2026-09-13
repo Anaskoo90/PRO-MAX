@@ -68,11 +68,18 @@ class ActionExecutor:
                     raise ValueError(
                         "Notification recipient does not belong to the workflow organization"
                     )
+                channel = NotificationChannel(action.config.get("channel", "email"))
+                if channel not in {NotificationChannel.EMAIL, NotificationChannel.IN_APP}:
+                    raise ValueError(
+                        "Workflow notifications support only email and in_app channels"
+                    )
                 await self._notification_dispatcher.dispatch(
                     NotificationRequest(
-                        org_id=org_id, channel=NotificationChannel(action.config.get("channel", "email")),
-                        recipient=recipient.email, subject=action.config.get("subject"),
+                        org_id=org_id, channel=channel,
+                        recipient=recipient.email, recipient_user_id=recipient.id,
+                        subject=action.config.get("subject"),
                         body=action.config.get("body", ""),
+                        in_app_body=action.config.get("body", ""),
                     )
                 )
 

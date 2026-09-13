@@ -6,6 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from app.boards.infrastructure.orm_models import BoardsBase
 from app.identity.infrastructure.orm_models import IdentityBase
+from app.notifications.infrastructure.orm_models import NotificationsBase
 from app.platform_core.configuration.settings import get_settings
 from app.projects.infrastructure.orm_models import ProjectsBase
 from app.tasks.infrastructure.orm_models import TasksBase
@@ -24,6 +25,7 @@ if config.config_file_name is not None:
 # Management, and Workflow Engine so far.
 target_metadata = [
     IdentityBase.metadata,
+    NotificationsBase.metadata,
     ProjectsBase.metadata,
     TasksBase.metadata,
     BoardsBase.metadata,

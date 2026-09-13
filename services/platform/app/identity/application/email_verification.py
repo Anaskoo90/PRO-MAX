@@ -72,6 +72,7 @@ class EmailVerificationService:
                     org_id=org_id,
                     channel=NotificationChannel.EMAIL,
                     recipient=email,
+                    recipient_user_id=user_id,
                     subject="Verify your GuildDesk email address",
                     body=f"{self._verification_link_base_url}?token={raw_token}",
                 )
