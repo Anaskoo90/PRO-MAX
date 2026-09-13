@@ -19,7 +19,10 @@ from uuid import UUID
 
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.events import SuspiciousLoginDetected
-from app.identity.domain.exceptions import BruteForceProtectionTriggeredError, IpAddressRestrictedError
+from app.identity.domain.exceptions import (
+    BruteForceProtectionTriggeredError,
+    IpAddressRestrictedError,
+)
 from app.identity.domain.security_entities import TrustedDevice
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
@@ -28,6 +31,7 @@ from app.platform_core.notifications.dispatcher import (
     NotificationDispatcher,
     NotificationRequest,
 )
+from app.platform_core.notifications.email_provider import EmailSendError
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import utcnow
 
@@ -64,14 +68,20 @@ class BruteForcePolicy:
 
 
 class BruteForceGuard:
-    def __init__(self, *, store: RateLimitStore, policy: BruteForcePolicy = BruteForcePolicy()) -> None:
+    def __init__(
+        self, *, store: RateLimitStore, policy: BruteForcePolicy = BruteForcePolicy()
+    ) -> None:
         self._store = store
         self._policy = policy
 
     async def check(self, *, ip_address: str) -> None:
-        count = await self._store.increment_and_get(f"login_attempts:{ip_address}", window_seconds=self._policy.window_seconds)
+        count = await self._store.increment_and_get(
+            f"login_attempts:{ip_address}", window_seconds=self._policy.window_seconds
+        )
         if count > self._policy.max_attempts_per_window:
-            raise BruteForceProtectionTriggeredError(retry_after_seconds=self._policy.window_seconds)
+            raise BruteForceProtectionTriggeredError(
+                retry_after_seconds=self._policy.window_seconds
+            )
 
 
 class IpRestrictionChecker:
@@ -110,7 +120,9 @@ class DeviceTrustService:
             if existing is not None:
                 return
             await uow.trusted_devices.add(
-                TrustedDevice.create(user_id=user_id, device_fingerprint_hash=fingerprint_hash, label=label)
+                TrustedDevice.create(
+                    user_id=user_id, device_fingerprint_hash=fingerprint_hash, label=label
+                )
             )
             await uow.commit()
 
@@ -144,7 +156,9 @@ class AuditLogQueryService:
     def __init__(self, *, uow_factory) -> None:
         self._uow_factory = uow_factory
 
-    async def list_for_org(self, *, org_id: OrgId, category: AuditEventCategory | None = None, limit: int = 50) -> list[AuditLogRecord]:
+    async def list_for_org(
+        self, *, org_id: OrgId, category: AuditEventCategory | None = None, limit: int = 50
+    ) -> list[AuditLogRecord]:
         async with self._uow_factory() as uow:
             return await uow.audit_logs.list_for_org(org_id, category=category, limit=limit)
 
@@ -178,12 +192,18 @@ class SecurityService:
                 ip_address=ip_address, allowlist=org.ip_allowlist(), denylist=org.ip_denylist()
             )
 
-    async def record_authentication_audit(self, *, org_id: OrgId, actor_user_id: UUID, action: str, ip_address: str) -> None:
+    async def record_authentication_audit(
+        self, *, org_id: OrgId, actor_user_id: UUID, action: str, ip_address: str
+    ) -> None:
         async with self._uow_factory() as uow:
             await uow.audit_logs.add(
                 AuditLogRecord.create(
-                    org_id=org_id, category=AuditEventCategory.AUTHENTICATION, action=action,
-                    actor_user_id=UserId(actor_user_id), resource_type="user", resource_id=str(actor_user_id),
+                    org_id=org_id,
+                    category=AuditEventCategory.AUTHENTICATION,
+                    action=action,
+                    actor_user_id=UserId(actor_user_id),
+                    resource_type="user",
+                    resource_id=str(actor_user_id),
                     ip_address=ip_address,
                 )
             )
@@ -225,5 +245,14 @@ class SuspiciousLoginNotifier:
             # not turn a valid login into a 500. Any other notification
             # failure (a misbehaving real provider, etc.) still propagates.
             await _logger.awarning(
-                "suspicious_login_alert_skipped_no_provider", user_id=str(user.id), ip_address=event.ip_address
+                "suspicious_login_alert_skipped_no_provider",
+                user_id=str(user.id),
+                ip_address=event.ip_address,
+            )
+        except EmailSendError as exc:
+            await _logger.awarning(
+                "suspicious_login_alert_delivery_failed",
+                user_id=str(user.id),
+                ip_address=event.ip_address,
+                error_type=type(exc).__name__,
             )

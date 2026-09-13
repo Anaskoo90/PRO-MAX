@@ -17,13 +17,21 @@ from pathlib import Path
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.identity.application.authentication import AuthenticationService, AuthPolicy, OAuth2LoginService
+from app.identity.application.authentication import (
+    AuthenticationService,
+    AuthPolicy,
+    OAuth2LoginService,
+)
 from app.identity.application.email_verification import EmailVerificationService
 from app.identity.application.mfa import MfaService
 from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.password_management import PasswordManagementService
-from app.identity.application.rbac_engine import PermissionEvaluator, PolicyEvaluator, RoleResolutionService
+from app.identity.application.rbac_engine import (
+    PermissionEvaluator,
+    PolicyEvaluator,
+    RoleResolutionService,
+)
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.application.security import (
     AuditLogQueryService,
@@ -59,6 +67,7 @@ from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger, AuditRecordSink
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
+from app.platform_core.notifications.email_provider import SmtpEmailProvider
 from app.platform_core.security.encryption import FieldEncryptionService
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
@@ -100,8 +109,27 @@ class IdentityModule:
         self.token_service = JwtTokenService(signing_key=settings.jwt_signing_key)
         self.encryption = FieldEncryptionService(FieldEncryptionService.generate_key())
         self.audit_logger = AuditLogger(_LoggingAuditRecordSink())
-        self.notification_dispatcher = NotificationDispatcher()  # no channel providers wired yet
+        email_provider = None
+        if settings.smtp_host:
+            email_provider = SmtpEmailProvider(
+                host=settings.smtp_host,
+                port=settings.smtp_port,
+                from_address=settings.smtp_from_address,
+                from_name=settings.smtp_from_name,
+                username=settings.smtp_username,
+                password=(
+                    settings.smtp_password.get_secret_value()
+                    if settings.smtp_password is not None
+                    else None
+                ),
+                use_ssl=settings.smtp_use_ssl,
+                start_tls=settings.smtp_start_tls,
+                timeout_seconds=settings.smtp_timeout_seconds,
+            )
+        self.notification_dispatcher = NotificationDispatcher(email_provider=email_provider)
         self.file_storage = LocalFileStorageProvider(Path("./.local-storage/avatars"))
+
+        web_app_base_url = str(settings.web_app_base_url).rstrip("/")
 
         def uow_factory() -> IdentityUnitOfWork:
             return IdentityUnitOfWork(self._session_factory)
@@ -156,12 +184,14 @@ class IdentityModule:
             uow_factory=uow_factory,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            verification_link_base_url=f"{web_app_base_url}/verify-email",
         )
         self.password_management_service = PasswordManagementService(
             uow_factory=uow_factory,
             password_hasher=self.password_hasher,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            reset_link_base_url=f"{web_app_base_url}/reset-password",
         )
         self.mfa_service = MfaService(
             uow_factory=uow_factory,
@@ -177,6 +207,7 @@ class IdentityModule:
             password_hasher=self.password_hasher,
             notification_dispatcher=self.notification_dispatcher,
             dispatcher=self.dispatcher,
+            invitation_link_base_url=f"{web_app_base_url}/accept-invitation",
         )
         self.team_service = TeamService(uow_factory=uow_factory, dispatcher=self.dispatcher)
 

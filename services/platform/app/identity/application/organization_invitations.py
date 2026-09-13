@@ -44,6 +44,7 @@ from app.platform_core.notifications.dispatcher import (
     NotificationDispatcher,
     NotificationRequest,
 )
+from app.platform_core.notifications.email_provider import EmailSendError
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
@@ -119,7 +120,9 @@ class OrganizationInvitationService:
             # request) matches invalidate_outstanding_for_user's role in
             # password_management.py/email_verification.py: re-inviting the
             # same address is a normal "resend" action, not an error.
-            existing = await uow.organization_invitations.get_pending_for_email(org_id, str(normalized_email))
+            existing = await uow.organization_invitations.get_pending_for_email(
+                org_id, str(normalized_email)
+            )
             if existing is not None:
                 existing.revoke()
                 await uow.organization_invitations.update(existing)
@@ -165,16 +168,30 @@ class OrganizationInvitationService:
             # invitation is already persisted and can be resent later once
             # a real provider is configured, so this must not fail the
             # request that triggered it.
-            await _logger.awarning("invitation_send_skipped_no_provider", invitation_id=str(invitation.id))
+            await _logger.awarning(
+                "invitation_send_skipped_no_provider", invitation_id=str(invitation.id)
+            )
+        except EmailSendError as exc:
+            await _logger.awarning(
+                "invitation_delivery_failed",
+                invitation_id=str(invitation.id),
+                error_type=type(exc).__name__,
+            )
 
         return _to_dto(invitation)
 
-    async def list_pending(self, *, org_id: OrgId, offset: int = 0, limit: int = 50) -> list[OrganizationInvitationDTO]:
+    async def list_pending(
+        self, *, org_id: OrgId, offset: int = 0, limit: int = 50
+    ) -> list[OrganizationInvitationDTO]:
         async with self._uow_factory() as uow:
-            invitations = await uow.organization_invitations.list_pending_for_org(org_id, offset=offset, limit=limit)
+            invitations = await uow.organization_invitations.list_pending_for_org(
+                org_id, offset=offset, limit=limit
+            )
             return [_to_dto(i) for i in invitations]
 
-    async def revoke_invitation(self, *, org_id: OrgId, invitation_id: EntityId, actor_user_id: UserId) -> None:
+    async def revoke_invitation(
+        self, *, org_id: OrgId, invitation_id: EntityId, actor_user_id: UserId
+    ) -> None:
         async with self._uow_factory() as uow:
             invitation = await uow.organization_invitations.get_by_id(invitation_id)
             if invitation is None or invitation.org_id != org_id:
@@ -234,9 +251,13 @@ class OrganizationInvitationService:
             user.verify_email()
             await uow.users.add(user)
             await uow.flush()
-            await uow.password_history.add(PasswordHistoryEntry.create(user_id=user.id, password_hash=password_hash))
+            await uow.password_history.add(
+                PasswordHistoryEntry.create(user_id=user.id, password_hash=password_hash)
+            )
             await uow.user_role_assignments.add(
-                UserRoleAssignment.create(user_id=UserId(user.id), role_id=invitation.role_id, org_id=invitation.org_id)
+                UserRoleAssignment.create(
+                    user_id=UserId(user.id), role_id=invitation.role_id, org_id=invitation.org_id
+                )
             )
 
             invitation.accept()

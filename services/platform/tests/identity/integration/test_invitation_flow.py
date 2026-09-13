@@ -8,12 +8,10 @@ test_registration_flow.py.
 
 from __future__ import annotations
 
+import secrets
 import uuid
 
-import secrets
-
 import pytest
-
 from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.domain.entities import User, UserStatus
 from app.identity.domain.exceptions import EmailAlreadyRegisteredError, InvalidTokenError
@@ -23,6 +21,7 @@ from app.identity.domain.rbac import Role
 from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
+from app.platform_core.notifications.email_provider import EmailMessage, EmailSendError
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -36,7 +35,9 @@ _TOKEN_PEPPER = "change-me-in-production"
 
 
 async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
-    org = Organization.create(name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7()))
+    org = Organization.create(
+        name="Acme", slug=f"acme-{uuid.uuid4().hex[:12]}", owner_user_id=UserId(new_uuid7())
+    )
     await uow.organizations.add(org)
     await uow.session.flush()
 
@@ -60,11 +61,18 @@ async def _seed_org_owner_and_role(uow) -> tuple[OrgId, EntityId, UserId]:
     return OrgId(org.id), role.id, UserId(owner.id)
 
 
-def _service(uow) -> OrganizationInvitationService:
+class _UnavailableEmailProvider:
+    async def send(self, message: EmailMessage) -> None:
+        raise EmailSendError("smtp connection refused")
+
+
+def _service(
+    uow, notification_dispatcher: NotificationDispatcher | None = None
+) -> OrganizationInvitationService:
     return OrganizationInvitationService(
         uow_factory=lambda: uow,
         password_hasher=PasswordHashingService(),
-        notification_dispatcher=NotificationDispatcher(),  # no channel providers wired — dispatch is a no-op skip
+        notification_dispatcher=notification_dispatcher or NotificationDispatcher(),
         dispatcher=EventDispatcher(),
     )
 
@@ -85,7 +93,9 @@ async def test_invite_then_accept_provisions_user_and_assigns_role(uow) -> None:
     await uow.commit()
 
     service = _service(uow)
-    profile = await service.accept_invitation(raw_token=raw_token, password="Correct-Horse-Battery-9", display_name="Invitee")
+    profile = await service.accept_invitation(
+        raw_token=raw_token, password="Correct-Horse-Battery-9", display_name="Invitee"
+    )
 
     assert profile.org_id == org_id
     assert profile.email == email
@@ -101,7 +111,9 @@ async def test_invite_then_accept_provisions_user_and_assigns_role(uow) -> None:
 async def test_accept_invitation_rejects_unknown_token(uow) -> None:
     service = _service(uow)
     with pytest.raises(InvalidTokenError):
-        await service.accept_invitation(raw_token="does-not-exist", password="Correct-Horse-Battery-9", display_name="X")
+        await service.accept_invitation(
+            raw_token="does-not-exist", password="Correct-Horse-Battery-9", display_name="X"
+        )
 
 
 async def test_invite_member_rejects_already_registered_email(uow) -> None:
@@ -120,8 +132,12 @@ async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
     service = _service(uow)
     email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
-    first = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
-    second = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+    first = await service.invite_member(
+        org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id
+    )
+    second = await service.invite_member(
+        org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id
+    )
 
     assert first.id != second.id
     superseded = await uow.organization_invitations.get_by_id(first.id)
@@ -130,13 +146,36 @@ async def test_invite_member_supersedes_an_outstanding_invitation(uow) -> None:
     assert still_pending.status.value == "pending"
 
 
+async def test_invite_is_persisted_during_email_transport_outage(uow) -> None:
+    org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
+    service = _service(
+        uow,
+        NotificationDispatcher(email_provider=_UnavailableEmailProvider()),
+    )
+
+    invitation = await service.invite_member(
+        org_id=org_id,
+        email=f"invitee-{uuid.uuid4().hex[:12]}@example.com",
+        role_id=role_id,
+        invited_by_user_id=owner_id,
+    )
+
+    persisted = await uow.organization_invitations.get_by_id(invitation.id)
+    assert persisted is not None
+    assert persisted.status.value == "pending"
+
+
 async def test_revoke_invitation_marks_it_revoked(uow) -> None:
     org_id, role_id, owner_id = await _seed_org_owner_and_role(uow)
     service = _service(uow)
     email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
-    invitation = await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
-    await service.revoke_invitation(org_id=org_id, invitation_id=invitation.id, actor_user_id=owner_id)
+    invitation = await service.invite_member(
+        org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id
+    )
+    await service.revoke_invitation(
+        org_id=org_id, invitation_id=invitation.id, actor_user_id=owner_id
+    )
 
     revoked = await uow.organization_invitations.get_by_id(invitation.id)
     assert revoked.status.value == "revoked"
@@ -147,7 +186,9 @@ async def test_list_pending_returns_the_invite(uow) -> None:
     service = _service(uow)
     email = f"invitee-{uuid.uuid4().hex[:12]}@example.com"
 
-    await service.invite_member(org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id)
+    await service.invite_member(
+        org_id=org_id, email=email, role_id=role_id, invited_by_user_id=owner_id
+    )
 
     pending = await service.list_pending(org_id=org_id)
     assert any(i.email == email for i in pending)

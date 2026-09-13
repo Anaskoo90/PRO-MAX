@@ -1,5 +1,4 @@
 import pytest
-
 from app.platform_core.configuration.settings import PlatformSettings
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY
@@ -22,6 +21,46 @@ def test_jwt_signing_key_cannot_be_omitted(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(ValueError, match="GUILDDESK_SECRET_JWT_SIGNING_KEY"):
         PlatformSettings(_env_file=None)
+
+
+def test_production_configuration_requires_an_email_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost/guilddesk")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", '["https://app.example.com"]')
+    monkeypatch.setenv("GUILDDESK_SECRET_JWT_SIGNING_KEY", "a" * 32)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+
+    with pytest.raises(ValueError, match="smtp_host"):
+        PlatformSettings(_env_file=None)
+
+
+def test_smtp_tls_modes_are_mutually_exclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost/guilddesk")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("GUILDDESK_SECRET_JWT_SIGNING_KEY", "a" * 32)
+    monkeypatch.setenv("SMTP_USE_SSL", "true")
+    monkeypatch.setenv("SMTP_START_TLS", "true")
+
+    with pytest.raises(ValueError, match="cannot both be enabled"):
+        PlatformSettings(_env_file=None)
+
+
+def test_blank_smtp_credentials_do_not_enable_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost/guilddesk")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("GUILDDESK_SECRET_JWT_SIGNING_KEY", "a" * 32)
+    monkeypatch.setenv("SMTP_USERNAME", "")
+    monkeypatch.setenv("SMTP_PASSWORD", "")
+
+    settings = PlatformSettings(_env_file=None)
+
+    assert settings.smtp_username is None
+    assert settings.smtp_password is None
 
 
 def test_password_hash_round_trips() -> None:

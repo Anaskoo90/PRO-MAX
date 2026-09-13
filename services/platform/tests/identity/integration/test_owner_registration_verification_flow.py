@@ -14,7 +14,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from app.identity.application.authentication import AuthenticationService
 from app.identity.application.email_verification import EmailVerificationService
 from app.identity.application.organization_management import OrganizationManagementService
@@ -23,9 +22,11 @@ from app.identity.domain.exceptions import AccountNotActiveError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
+from app.platform_core.notifications.email_provider import EmailMessage, EmailSendError
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.identity.unit.fakes import FakeAuditRecordSink
 
 pytestmark = pytest.mark.asyncio
@@ -33,18 +34,29 @@ pytestmark = pytest.mark.asyncio
 _PASSWORD = "Correct-Horse-Battery-9"
 
 
-def _make_services(uow):
+class _UnavailableEmailProvider:
+    async def send(self, message: EmailMessage) -> None:
+        raise EmailSendError("smtp connection refused")
+
+
+def _make_services(uow, notification_dispatcher: NotificationDispatcher | None = None):
     dispatcher = EventDispatcher()
     org_service = OrganizationManagementService(
-        uow_factory=lambda: uow, password_hasher=PasswordHashingService(), dispatcher=dispatcher,
+        uow_factory=lambda: uow,
+        password_hasher=PasswordHashingService(),
+        dispatcher=dispatcher,
     )
     email_service = EmailVerificationService(
-        uow_factory=lambda: uow, dispatcher=dispatcher,
-        notification_dispatcher=NotificationDispatcher(), verification_link_base_url="https://app.test/verify",
+        uow_factory=lambda: uow,
+        dispatcher=dispatcher,
+        notification_dispatcher=notification_dispatcher or NotificationDispatcher(),
+        verification_link_base_url="https://app.test/verify",
     )
     auth_service = AuthenticationService(
-        uow_factory=lambda: uow, password_hasher=PasswordHashingService(),
-        token_service=JwtTokenService(signing_key="a" * 32), dispatcher=dispatcher,
+        uow_factory=lambda: uow,
+        password_hasher=PasswordHashingService(),
+        token_service=JwtTokenService(signing_key="a" * 32),
+        dispatcher=dispatcher,
         audit_logger=AuditLogger(FakeAuditRecordSink()),
     )
     # Same subscription identity/composition.py wires in production — this
@@ -53,7 +65,34 @@ def _make_services(uow):
     return org_service, auth_service
 
 
-async def test_self_registration_fires_user_registered_and_creates_a_usable_verification_token(uow) -> None:
+async def test_registration_succeeds_and_persists_verification_token_during_email_outage(
+    uow,
+) -> None:
+    org_service, _ = _make_services(
+        uow,
+        NotificationDispatcher(email_provider=_UnavailableEmailProvider()),
+    )
+    known_raw_token = "known-token-created-during-mail-outage"
+
+    with patch("secrets.token_urlsafe", return_value=known_raw_token):
+        _, owner_id = await org_service.register_organization_with_owner(
+            org_name="Outage Org",
+            slug=f"outage-{new_uuid7().hex[:12]}",
+            owner_email=f"owner-{new_uuid7().hex[:12]}@example.com",
+            owner_password=_PASSWORD,
+            owner_display_name="Owner",
+        )
+
+    token = await uow.email_verification_tokens.get_by_token_hash(
+        hash_for_lookup(known_raw_token, secret_pepper="change-me-in-production")
+    )
+    assert token is not None
+    assert token.user_id == owner_id
+
+
+async def test_self_registration_fires_user_registered_and_creates_a_usable_verification_token(
+    uow,
+) -> None:
     org_service, auth_service = _make_services(uow)
     slug = f"acme-{new_uuid7().hex[:12]}"
     email = f"owner-{new_uuid7().hex[:12]}@example.com"
@@ -61,7 +100,11 @@ async def test_self_registration_fires_user_registered_and_creates_a_usable_veri
     known_raw_token = "known-raw-token-for-this-test"
     with patch("secrets.token_urlsafe", return_value=known_raw_token):
         org_dto, owner_id = await org_service.register_organization_with_owner(
-            org_name="Acme", slug=slug, owner_email=email, owner_password=_PASSWORD, owner_display_name="Owner",
+            org_name="Acme",
+            slug=slug,
+            owner_email=email,
+            owner_password=_PASSWORD,
+            owner_display_name="Owner",
         )
 
     # The org's owner_user_id must point at the real registered user, not a
@@ -81,20 +124,30 @@ async def test_self_registration_fires_user_registered_and_creates_a_usable_veri
     # behavior) ...
     with pytest.raises(AccountNotActiveError):
         await auth_service.login(
-            org_id=org_dto.id, email=email, password=_PASSWORD,
-            ip_address="127.0.0.1", device_info=None, remember_me=False,
+            org_id=org_dto.id,
+            email=email,
+            password=_PASSWORD,
+            ip_address="127.0.0.1",
+            device_info=None,
+            remember_me=False,
         )
 
     # ... and the owner must be able to complete verification and then log
     # in — the actual end-to-end guarantee this bug broke.
     email_service = EmailVerificationService(
-        uow_factory=lambda: uow, dispatcher=EventDispatcher(),
-        notification_dispatcher=NotificationDispatcher(), verification_link_base_url="https://app.test/verify",
+        uow_factory=lambda: uow,
+        dispatcher=EventDispatcher(),
+        notification_dispatcher=NotificationDispatcher(),
+        verification_link_base_url="https://app.test/verify",
     )
     await email_service.verify_email(raw_token=known_raw_token)
 
     login_result = await auth_service.login(
-        org_id=org_dto.id, email=email, password=_PASSWORD,
-        ip_address="127.0.0.1", device_info=None, remember_me=False,
+        org_id=org_dto.id,
+        email=email,
+        password=_PASSWORD,
+        ip_address="127.0.0.1",
+        device_info=None,
+        remember_me=False,
     )
     assert login_result.tokens is not None

@@ -36,6 +36,7 @@ from app.platform_core.notifications.dispatcher import (
     NotificationDispatcher,
     NotificationRequest,
 )
+from app.platform_core.notifications.email_provider import EmailSendError
 from app.platform_core.security.hashing import PasswordHashingService, hash_for_lookup
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
 from app.platform_core.shared_kernel.types import EntityId, OrgId
@@ -72,16 +73,24 @@ class PasswordManagementService:
         if violations:
             raise WeakPasswordError(violations)
 
-        history = await uow.password_history.recent_for_user(user.id, limit=self._history_check_depth)
-        if PasswordReuseSpecification(self._password_hasher).is_satisfied_by((new_password, history)):
+        history = await uow.password_history.recent_for_user(
+            user.id, limit=self._history_check_depth
+        )
+        if PasswordReuseSpecification(self._password_hasher).is_satisfied_by(
+            (new_password, history)
+        ):
             raise PasswordReuseError()
 
         new_hash = self._password_hasher.hash(new_password)
         user.change_password(new_hash)
         await uow.users.update(user)
-        await uow.password_history.add(PasswordHistoryEntry.create(user_id=user.id, password_hash=new_hash))
+        await uow.password_history.add(
+            PasswordHistoryEntry.create(user_id=user.id, password_hash=new_hash)
+        )
 
-    async def change_password(self, *, user_id: EntityId, current_password: str, new_password: str) -> None:
+    async def change_password(
+        self, *, user_id: EntityId, current_password: str, new_password: str
+    ) -> None:
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
             if user is None:
@@ -106,7 +115,9 @@ class PasswordManagementService:
             raw_token = secrets.token_urlsafe(32)
             token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)
             await uow.password_reset_tokens.invalidate_outstanding_for_user(user.id)
-            await uow.password_reset_tokens.add(PasswordResetToken.create(user_id=user.id, token_hash=token_hash))
+            await uow.password_reset_tokens.add(
+                PasswordResetToken.create(user_id=user.id, token_hash=token_hash)
+            )
             await uow.commit()
             await self._dispatcher.dispatch(PasswordResetRequested(aggregate_id=user.id))
 
@@ -129,6 +140,15 @@ class PasswordManagementService:
             # is registered (this method already returns identically for an
             # unregistered email via the early `return` above).
             await _logger.awarning("password_reset_send_skipped_no_provider", user_id=str(user.id))
+        except EmailSendError as exc:
+            # Delivery is intentionally best-effort after the token commit.
+            # Returning differently here would expose whether an account
+            # exists whenever the mail transport is unavailable.
+            await _logger.awarning(
+                "password_reset_delivery_failed",
+                user_id=str(user.id),
+                error_type=type(exc).__name__,
+            )
 
     async def reset_password(self, *, raw_token: str, new_password: str) -> None:
         token_hash = hash_for_lookup(raw_token, secret_pepper=_TOKEN_PEPPER)

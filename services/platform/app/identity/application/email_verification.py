@@ -28,6 +28,7 @@ from app.platform_core.notifications.dispatcher import (
     NotificationDispatcher,
     NotificationRequest,
 )
+from app.platform_core.notifications.email_provider import EmailSendError
 from app.platform_core.security.hashing import hash_for_lookup
 from app.platform_core.shared_kernel.types import EntityId, OrgId
 
@@ -51,7 +52,9 @@ class EmailVerificationService:
         self._verification_link_base_url = verification_link_base_url
 
     async def on_user_registered(self, event: UserRegistered) -> None:
-        await self.send_verification(user_id=EntityId(event.aggregate_id), org_id=OrgId(event.org_id), email=event.email)
+        await self.send_verification(
+            user_id=EntityId(event.aggregate_id), org_id=OrgId(event.org_id), email=event.email
+        )
 
     async def send_verification(self, *, user_id: EntityId, org_id: OrgId, email: str) -> None:
         raw_token = secrets.token_urlsafe(32)
@@ -81,7 +84,15 @@ class EmailVerificationService:
             # The verification token is already persisted and resend_verification
             # exists for when a provider is configured, so this must not fail
             # the registration request that triggered it.
-            await _logger.awarning("email_verification_send_skipped_no_provider", user_id=str(user_id))
+            await _logger.awarning(
+                "email_verification_send_skipped_no_provider", user_id=str(user_id)
+            )
+        except EmailSendError as exc:
+            await _logger.awarning(
+                "email_verification_delivery_failed",
+                user_id=str(user_id),
+                error_type=type(exc).__name__,
+            )
 
     async def resend_verification(self, *, user_id: EntityId) -> None:
         async with self._uow_factory() as uow:
