@@ -9,6 +9,7 @@ more than one aggregate instance.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import TaskDependencyDTO, TaskDTO, TaskRelationDTO
@@ -78,6 +79,7 @@ class TaskRelationshipService:
             task.set_parent(parent_task_id)
             await uow.tasks.update(task)
             events = task.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
@@ -127,8 +129,17 @@ class TaskRelationshipService:
                     metadata={"depends_on_task_id": str(depends_on_task_id)},
                 )
             )
+            event = TaskDependencyAdded(
+                aggregate_id=task_id,
+                depends_on_task_id=depends_on_task_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskDependencyAdded(aggregate_id=task_id, depends_on_task_id=depends_on_task_id))
+            await self._dispatcher.dispatch(event)
             return TaskDependencyDTO(id=dependency.id, task_id=dependency.task_id, depends_on_task_id=dependency.depends_on_task_id)
 
     async def remove_dependency(self, *, task_id: EntityId, actor_user_id: UserId, depends_on_task_id: EntityId) -> None:
@@ -142,8 +153,17 @@ class TaskRelationshipService:
             if dependency is None:
                 raise TaskDependencyNotFoundError(task_id, depends_on_task_id)
             await uow.task_dependencies.delete(dependency.id)
+            event = TaskDependencyRemoved(
+                aggregate_id=task_id,
+                depends_on_task_id=depends_on_task_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskDependencyRemoved(aggregate_id=task_id, depends_on_task_id=depends_on_task_id))
+            await self._dispatcher.dispatch(event)
 
     async def list_blocking_tasks(self, *, task_id: EntityId) -> list[TaskDTO]:
         """"Blocked By": the tasks that must complete before this one can,
@@ -176,8 +196,17 @@ class TaskRelationshipService:
 
             relation = TaskRelation.create(task_id=task_id, related_task_id=related_task_id)
             await uow.task_relations.add(relation)
+            event = TaskRelationAdded(
+                aggregate_id=task_id,
+                related_task_id=related_task_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskRelationAdded(aggregate_id=task_id, related_task_id=related_task_id))
+            await self._dispatcher.dispatch(event)
             return TaskRelationDTO(id=relation.id, task_id=relation.task_id, related_task_id=relation.related_task_id)
 
     async def remove_related_task(self, *, task_id: EntityId, actor_user_id: UserId, related_task_id: EntityId) -> None:
@@ -191,8 +220,17 @@ class TaskRelationshipService:
             if relation is None:
                 raise TaskRelationNotFoundError(task_id, related_task_id)
             await uow.task_relations.delete(relation.id)
+            event = TaskRelationRemoved(
+                aggregate_id=task_id,
+                related_task_id=related_task_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskRelationRemoved(aggregate_id=task_id, related_task_id=related_task_id))
+            await self._dispatcher.dispatch(event)
 
     async def list_related_tasks(self, *, task_id: EntityId) -> list[TaskDTO]:
         async with self._uow_factory() as uow:

@@ -12,9 +12,9 @@ established for its own workspace/project authorization.
 
 from __future__ import annotations
 
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.tasks.application.ports import OrgPermissionCheckerPort, ProjectContextPort, ProjectSummary
 from app.tasks.domain.exceptions import InsufficientTaskPermissionError, ProjectNotAccessibleError
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 _MANAGING_ROLES = ("owner", "admin", "contributor")
 
@@ -32,11 +32,14 @@ class TaskAuthorization:
 
     async def can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
         project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        return await self._can_manage_project(project=project, user_id=user_id)
+
+    async def _can_manage_project(self, *, project: ProjectSummary, user_id: UserId) -> bool:
         if await self._permission_checker.has_permission(
             user_id=user_id, org_id=project.org_id, resource="task", action="update"
         ):
             return True
-        member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
+        member = await self._project_context.get_member(project_id=project.id, user_id=user_id)
         return member is not None and member.status == "active" and member.role in _MANAGING_ROLES
 
     async def can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
@@ -48,9 +51,13 @@ class TaskAuthorization:
         member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
         return member is not None and member.status == "active"
 
-    async def assert_can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
-        if not await self.can_manage(project_id=project_id, org_id=org_id, user_id=user_id):
+    async def assert_can_manage(
+        self, *, project_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> ProjectSummary:
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if not await self._can_manage_project(project=project, user_id=user_id):
             raise InsufficientTaskPermissionError(_MANAGING_ROLES)
+        return project
 
     async def assert_can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_view(project_id=project_id, org_id=org_id, user_id=user_id):

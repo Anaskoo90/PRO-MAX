@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import LabelDTO
@@ -46,7 +47,11 @@ class LabelService:
 
     async def create_label(self, *, project_id: EntityId, org_id, actor_user_id: UserId, name: str, color: str) -> LabelDTO:
         _validate_color(color)
-        await self._authorization.assert_can_manage(project_id=project_id, org_id=org_id, user_id=actor_user_id)
+        project = await self._authorization.assert_can_manage(
+            project_id=project_id,
+            org_id=org_id,
+            user_id=actor_user_id,
+        )
 
         async with self._uow_factory() as uow:
             if await uow.labels.get_by_name(project_id, name) is not None:
@@ -54,6 +59,11 @@ class LabelService:
             label = Label.create(project_id=project_id, name=name, color=color)
             await uow.labels.add(label)
             events = label.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=project.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(label)
@@ -67,11 +77,20 @@ class LabelService:
             label = await uow.labels.get_by_id(label_id)
             if label is None:
                 raise LabelNotFoundError(label_id)
-            await self._authorization.assert_can_manage(project_id=label.project_id, org_id=org_id, user_id=actor_user_id)
+            project = await self._authorization.assert_can_manage(
+                project_id=label.project_id,
+                org_id=org_id,
+                user_id=actor_user_id,
+            )
 
             label.update(name=name, color=color)
             await uow.labels.update(label)
             events = label.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=project.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(label)
@@ -81,16 +100,25 @@ class LabelService:
             label = await uow.labels.get_by_id(label_id)
             if label is None:
                 raise LabelNotFoundError(label_id)
-            await self._authorization.assert_can_manage(project_id=label.project_id, org_id=org_id, user_id=actor_user_id)
+            project = await self._authorization.assert_can_manage(
+                project_id=label.project_id,
+                org_id=org_id,
+                user_id=actor_user_id,
+            )
 
             label.mark_deleted()
             events = label.pull_domain_events()
             await uow.labels.delete(label_id)
             await uow.audit_logs.add(
                 TasksAuditLogRecord.create(
-                    org_id=org_id, category=TasksAuditEventCategory.LABEL_CHANGE, action="label_deleted",
+                    org_id=project.org_id, category=TasksAuditEventCategory.LABEL_CHANGE, action="label_deleted",
                     actor_user_id=actor_user_id, resource_type="label", resource_id=str(label_id),
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=project.org_id,
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
@@ -114,8 +142,14 @@ class LabelService:
                 raise TaskLabelAlreadyAttachedError()
 
             await uow.task_labels.add(TaskLabel.create(task_id=task_id, label_id=label_id))
+            event = TaskLabelAttached(aggregate_id=task_id, label_id=label_id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskLabelAttached(aggregate_id=task_id, label_id=label_id))
+            await self._dispatcher.dispatch(event)
 
     async def detach_label(self, *, task_id: EntityId, label_id: EntityId, actor_user_id: UserId) -> None:
         async with self._uow_factory() as uow:
@@ -131,8 +165,14 @@ class LabelService:
             if task_label is None:
                 return  # detach is idempotent
             await uow.task_labels.delete(task_label.id)
+            event = TaskLabelDetached(aggregate_id=task_id, label_id=label_id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskLabelDetached(aggregate_id=task_id, label_id=label_id))
+            await self._dispatcher.dispatch(event)
 
     async def list_labels_for_task(self, *, task_id: EntityId) -> list[LabelDTO]:
         async with self._uow_factory() as uow:

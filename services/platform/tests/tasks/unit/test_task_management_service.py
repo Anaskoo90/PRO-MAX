@@ -39,6 +39,9 @@ async def test_create_task_succeeds_for_a_project_member(context) -> None:
     assert task.title == "Demo"
     assert task.status == "backlog"
     assert task.priority == "medium"
+    assert len(uow.outbox.events) == 1
+    assert uow.outbox.events[0].org_id == org_id
+    assert uow.outbox.events[0].payload["event_type"] == "tasks.task_created"
 
 
 @pytest.mark.asyncio

@@ -119,6 +119,7 @@ class TasksModule:
         )
         self.workflow_service = WorkflowService(
             uow_factory=uow_factory, dispatcher=self.dispatcher, permission_checker=permission_checker,
+            project_context=project_context,
         )
 
         # --- Background Jobs (platform_core.jobs — first bounded context to use it) ---

@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import TaskDTO
@@ -69,6 +70,7 @@ class TaskService:
                     actor_user_id=actor_user_id, resource_type="task", resource_id=str(task.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
@@ -120,6 +122,7 @@ class TaskService:
             task.update(title=title, description=description)
             await uow.tasks.update(task)
             events = task.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
@@ -136,6 +139,7 @@ class TaskService:
                     actor_user_id=actor_user_id, resource_type="task", resource_id=str(task.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
@@ -146,6 +150,7 @@ class TaskService:
             task.restore()
             await uow.tasks.update(task)
             events = task.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
@@ -164,6 +169,7 @@ class TaskService:
                     actor_user_id=actor_user_id, resource_type="task", resource_id=str(task.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -185,6 +191,11 @@ class TaskService:
                     actor_user_id=actor_user_id, resource_type="task", resource_id=str(duplicate.id),
                     metadata={"source_task_id": str(source.id)},
                 )
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=duplicate.org_id,
             )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)

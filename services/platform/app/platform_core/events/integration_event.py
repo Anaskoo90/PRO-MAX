@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.platform_core.events.contracts import DomainEvent, IntegrationEvent
+from app.platform_core.events.publisher import OutboxWriter
+from app.platform_core.shared_kernel.types import OrgId
 
 
 class IntegrationEventMapper(Protocol):
@@ -32,3 +34,35 @@ class IntegrationEventMapperRegistry:
                     mapped.append(mapper.to_integration_event(event))
                     break
         return mapped
+
+
+def domain_event_to_integration_event(
+    event: DomainEvent,
+    *,
+    org_id: OrgId,
+) -> IntegrationEvent:
+    """Create the stable wire envelope for a context-owned domain event."""
+
+    return IntegrationEvent(
+        event_id=event.event_id,
+        occurred_at=event.occurred_at,
+        org_id=org_id,
+        payload={
+            "event_type": event.event_type,
+            "data": event.model_dump(mode="json"),
+        },
+    )
+
+
+async def append_domain_events_to_outbox(
+    outbox: OutboxWriter,
+    events: list[DomainEvent],
+    *,
+    org_id: OrgId,
+) -> None:
+    """Persist mapped events before the owning business transaction commits."""
+
+    for event in events:
+        await outbox.append(
+            domain_event_to_integration_event(event, org_id=org_id)
+        )

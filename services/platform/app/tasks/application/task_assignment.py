@@ -16,6 +16,7 @@ see composition.py) to resolve their email.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.logging.logger import get_logger
 from app.platform_core.notifications.dispatcher import (
     NoProviderRegisteredError,
@@ -133,9 +134,19 @@ class TaskAssignmentService:
                     metadata={"assignee_user_id": str(assignee_user_id)},
                 )
             )
+            event = TaskAssigned(
+                aggregate_id=task_id,
+                user_id=assignee_user_id,
+                is_primary=is_primary,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
             task_title, task_org_id = task.title, task.org_id
-            await self._dispatcher.dispatch(TaskAssigned(aggregate_id=task_id, user_id=assignee_user_id, is_primary=is_primary))
+            await self._dispatcher.dispatch(event)
 
         await self._notify_assignee(org_id=task_org_id, user_id=assignee_user_id, task_title=task_title)
         return _assignment_to_dto(assignment)
@@ -163,8 +174,14 @@ class TaskAssignmentService:
                     task_id=task_id, user_id=assignee_user_id, action=TaskAssignmentAction.UNASSIGNED, actor_user_id=actor_user_id,
                 )
             )
+            event = TaskUnassigned(aggregate_id=task_id, user_id=assignee_user_id)
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
-            await self._dispatcher.dispatch(TaskUnassigned(aggregate_id=task_id, user_id=assignee_user_id))
+            await self._dispatcher.dispatch(event)
 
     async def reassign(
         self, *, task_id: EntityId, actor_user_id: UserId, from_user_id: UserId | None, to_user_id: UserId,
@@ -204,11 +221,19 @@ class TaskAssignmentService:
                     task_id=task_id, user_id=to_user_id, action=TaskAssignmentAction.REASSIGNED, actor_user_id=actor_user_id,
                 )
             )
+            event = TaskReassigned(
+                aggregate_id=task_id,
+                previous_user_id=previous_user_id,
+                new_user_id=to_user_id,
+            )
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                [event],
+                org_id=task.org_id,
+            )
             await uow.commit()
             task_title, task_org_id = task.title, task.org_id
-            await self._dispatcher.dispatch(
-                TaskReassigned(aggregate_id=task_id, previous_user_id=previous_user_id, new_user_id=to_user_id)
-            )
+            await self._dispatcher.dispatch(event)
 
         await self._notify_assignee(org_id=task_org_id, user_id=to_user_id, task_title=task_title)
         return _assignment_to_dto(new_assignment)

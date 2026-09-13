@@ -8,10 +8,15 @@ DEFAULT_WORKFLOW, so most projects never need to touch this at all.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId
+from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import WorkflowDefinitionDTO
-from app.tasks.application.ports import OrgPermissionCheckerPort
-from app.tasks.domain.exceptions import InsufficientTaskPermissionError, WorkflowDefinitionNotFoundError
+from app.tasks.application.ports import OrgPermissionCheckerPort, ProjectContextPort
+from app.tasks.domain.exceptions import (
+    InsufficientTaskPermissionError,
+    WorkflowDefinitionNotFoundError,
+)
 from app.tasks.domain.workflow import DEFAULT_WORKFLOW, TaskStatus, Workflow, WorkflowDefinition
 
 
@@ -29,10 +34,21 @@ def _to_dto(workflow: WorkflowDefinition) -> WorkflowDefinitionDTO:
 
 
 class WorkflowService:
-    def __init__(self, *, uow_factory, dispatcher: EventDispatcher, permission_checker: OrgPermissionCheckerPort) -> None:
+    def __init__(
+        self,
+        *,
+        uow_factory,
+        dispatcher: EventDispatcher,
+        permission_checker: OrgPermissionCheckerPort,
+        project_context: ProjectContextPort,
+    ) -> None:
         self._uow_factory = uow_factory
         self._dispatcher = dispatcher
         self._permission_checker = permission_checker
+        self._authorization = TaskAuthorization(
+            permission_checker=permission_checker,
+            project_context=project_context,
+        )
 
     async def _assert_can_manage_workflows(self, *, org_id, actor_user_id) -> None:
         if not await self._permission_checker.has_permission(
@@ -44,7 +60,14 @@ class WorkflowService:
         self, *, project_id: EntityId, org_id, actor_user_id, name: str, statuses: list[str],
         transitions: dict[str, list[str]],
     ) -> WorkflowDefinitionDTO:
-        await self._assert_can_manage_workflows(org_id=org_id, actor_user_id=actor_user_id)
+        project = await self._authorization.assert_project_accessible(
+            project_id=project_id,
+            org_id=org_id,
+        )
+        await self._assert_can_manage_workflows(
+            org_id=project.org_id,
+            actor_user_id=actor_user_id,
+        )
 
         status_tuple = tuple(TaskStatus(s) for s in statuses)
         transitions_map = {TaskStatus(k): frozenset(TaskStatus(v) for v in vs) for k, vs in transitions.items()}
@@ -59,6 +82,11 @@ class WorkflowService:
                 await uow.workflow_definitions.update(existing)
                 workflow = existing
             events = workflow.pull_domain_events()
+            await append_domain_events_to_outbox(
+                uow.outbox,
+                events,
+                org_id=project.org_id,
+            )
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)

@@ -12,6 +12,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, UserId
 from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import TaskDTO
@@ -79,6 +80,7 @@ class TaskOrderingService:
             task.set_position(new_position)
             await uow.tasks.update(task)
             events = task.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=task.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(task)
