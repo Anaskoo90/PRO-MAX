@@ -11,7 +11,7 @@ convention, just a different bounded context's tables.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 from uuid import UUID
 
 from app.identity.infrastructure.unit_of_work import IdentityUnitOfWork
@@ -27,11 +27,21 @@ class IdentityUserDirectoryAdapter:
             user = await uow.users.get_by_email(org_id, email.strip().lower())
         if user is None:
             return None
-        return UserSummary(id=user.id, email=str(user.email), display_name=user.display_name)
+        return UserSummary(
+            id=user.id,
+            org_id=user.org_id,
+            email=str(user.email),
+            display_name=user.display_name,
+        )
 
     async def get_by_id(self, *, user_id: UUID) -> UserSummary | None:
         async with self._identity_uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
         if user is None:
             return None
-        return UserSummary(id=user.id, email=str(user.email), display_name=user.display_name)
+        return UserSummary(
+            id=user.id,
+            org_id=user.org_id,
+            email=str(user.email),
+            display_name=user.display_name,
+        )

@@ -9,7 +9,11 @@ from app.workflow_engine.application.dtos import WorkflowDTO
 from app.workflow_engine.application.ports import OrgPermissionCheckerPort, ProjectContextPort
 from app.workflow_engine.domain.audit import WorkflowAuditEventCategory, WorkflowAuditLogRecord
 from app.workflow_engine.domain.entities import WorkflowDefinition
-from app.workflow_engine.domain.exceptions import InsufficientWorkflowPermissionError, WorkflowNotFoundError
+from app.workflow_engine.domain.exceptions import (
+    InsufficientWorkflowPermissionError,
+    ProjectNotAccessibleError,
+    WorkflowNotFoundError,
+)
 
 
 def _to_dto(workflow: WorkflowDefinition) -> WorkflowDTO:
@@ -49,14 +53,33 @@ class WorkflowService:
             await self._dispatcher.dispatch_all(events)
             return _to_dto(workflow)
 
-    async def get(self, *, workflow_id: EntityId) -> WorkflowDTO:
+    async def get(
+        self, *, workflow_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> WorkflowDTO:
         async with self._uow_factory() as uow:
             workflow = await uow.workflows.get_by_id(workflow_id)
             if workflow is None:
                 raise WorkflowNotFoundError(workflow_id)
+            if workflow.org_id != org_id:
+                raise ProjectNotAccessibleError(workflow.project_id)
+            await self._authorization.assert_can_view(
+                project_id=workflow.project_id,
+                org_id=workflow.org_id,
+                user_id=user_id,
+            )
             return _to_dto(workflow)
 
-    async def list_for_project(self, *, project_id: EntityId, include_archived: bool = False) -> list[WorkflowDTO]:
+    async def list_for_project(
+        self,
+        *,
+        project_id: EntityId,
+        org_id: OrgId,
+        user_id: UserId,
+        include_archived: bool = False,
+    ) -> list[WorkflowDTO]:
+        await self._authorization.assert_can_view(
+            project_id=project_id, org_id=org_id, user_id=user_id
+        )
         async with self._uow_factory() as uow:
             workflows = await uow.workflows.list_for_project(project_id, include_archived=include_archived)
             return [_to_dto(w) for w in workflows]

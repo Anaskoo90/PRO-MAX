@@ -6,6 +6,9 @@ from uuid import UUID
 
 from fastapi import Depends
 
+from app.platform_core.api.responses import DataResponse
+from app.platform_core.api.versioning import versioned_router
+from app.platform_core.security.token import TokenClaims
 from app.workflow_engine.application.state_management import WorkflowStateService
 from app.workflow_engine.presentation import deps
 from app.workflow_engine.presentation.schemas import (
@@ -16,9 +19,6 @@ from app.workflow_engine.presentation.schemas import (
     SetStateFlagRequest,
     WorkflowStateResponse,
 )
-from app.platform_core.api.responses import DataResponse
-from app.platform_core.api.versioning import versioned_router
-from app.platform_core.security.token import TokenClaims
 
 router = versioned_router(version="v1", tags=["workflow-states"])
 
@@ -48,9 +48,14 @@ async def create_state(
 @router.get("/workflows/{workflow_id}/states", response_model=DataResponse[list[WorkflowStateResponse]])
 async def list_states(
     workflow_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowStateService = Depends(deps.get_workflow_state_service),
 ) -> DataResponse[list[WorkflowStateResponse]]:
-    states = await service.list_for_workflow(workflow_id=UUID(workflow_id))
+    states = await service.list_for_workflow(
+        workflow_id=UUID(workflow_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[_to_response(s) for s in states])
 
 

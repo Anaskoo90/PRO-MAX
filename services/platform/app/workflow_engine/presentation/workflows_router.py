@@ -6,12 +6,16 @@ from uuid import UUID
 
 from fastapi import Depends
 
-from app.workflow_engine.application.workflow_management import WorkflowService
-from app.workflow_engine.presentation import deps
-from app.workflow_engine.presentation.schemas import CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowResponse
 from app.platform_core.api.responses import DataResponse
 from app.platform_core.api.versioning import versioned_router
 from app.platform_core.security.token import TokenClaims
+from app.workflow_engine.application.workflow_management import WorkflowService
+from app.workflow_engine.presentation import deps
+from app.workflow_engine.presentation.schemas import (
+    CreateWorkflowRequest,
+    UpdateWorkflowRequest,
+    WorkflowResponse,
+)
 
 router = versioned_router(version="v1", tags=["workflows"])
 
@@ -41,18 +45,29 @@ async def create_workflow(
 async def list_workflows(
     project_id: str,
     include_archived: bool = False,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowService = Depends(deps.get_workflow_service),
 ) -> DataResponse[list[WorkflowResponse]]:
-    workflows = await service.list_for_project(project_id=UUID(project_id), include_archived=include_archived)
+    workflows = await service.list_for_project(
+        project_id=UUID(project_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+        include_archived=include_archived,
+    )
     return DataResponse(data=[_to_response(w) for w in workflows])
 
 
 @router.get("/workflows/{workflow_id}", response_model=DataResponse[WorkflowResponse])
 async def get_workflow(
     workflow_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowService = Depends(deps.get_workflow_service),
 ) -> DataResponse[WorkflowResponse]:
-    workflow = await service.get(workflow_id=UUID(workflow_id))
+    workflow = await service.get(
+        workflow_id=UUID(workflow_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_to_response(workflow))
 
 

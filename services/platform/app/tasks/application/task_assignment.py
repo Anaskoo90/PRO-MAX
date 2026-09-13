@@ -26,9 +26,17 @@ from app.platform_core.notifications.dispatcher import (
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.tasks.application.authorization_helpers import TaskAuthorization
 from app.tasks.application.dtos import TaskAssignmentDTO, TaskAssignmentHistoryDTO
-from app.tasks.application.ports import OrgPermissionCheckerPort, ProjectContextPort, UserDirectoryPort
+from app.tasks.application.ports import (
+    OrgPermissionCheckerPort,
+    ProjectContextPort,
+    UserDirectoryPort,
+)
 from app.tasks.domain.audit import TasksAuditEventCategory, TasksAuditLogRecord
-from app.tasks.domain.entities import TaskAssignment, TaskAssignmentAction, TaskAssignmentHistoryRecord
+from app.tasks.domain.entities import (
+    TaskAssignment,
+    TaskAssignmentAction,
+    TaskAssignmentHistoryRecord,
+)
 from app.tasks.domain.events import TaskAssigned, TaskReassigned, TaskUnassigned
 from app.tasks.domain.exceptions import (
     TaskAlreadyAssignedError,
@@ -72,7 +80,7 @@ class TaskAssignmentService:
         if self._notification_dispatcher is None or self._user_directory is None:
             return
         user = await self._user_directory.get_by_id(user_id=user_id)
-        if user is None:
+        if user is None or user.org_id != org_id:
             return
         try:
             await self._notification_dispatcher.dispatch(

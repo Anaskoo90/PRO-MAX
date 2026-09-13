@@ -33,14 +33,14 @@ from app.workflow_engine.domain.repositories import (
     PendingAutomationActionRepository,
     TransitionRuleRepository,
     WorkflowActionRepository,
+    WorkflowActivityEntryRepository,
     WorkflowApprovalRequestRepository,
     WorkflowAuditLogRepository,
     WorkflowChecklistCompletionRepository,
     WorkflowChecklistItemRepository,
     WorkflowConditionRepository,
-    WorkflowActivityEntryRepository,
-    WorkflowRepository,
     WorkflowExecutionRecordRepository,
+    WorkflowRepository,
     WorkflowStateRepository,
     WorkflowTaskStateRepository,
     WorkflowTransitionRepository,
@@ -64,7 +64,7 @@ class WorkflowEngineUnitOfWorkPort(Protocol):
     audit_logs: WorkflowAuditLogRepository
     outbox: OutboxWriter
 
-    async def __aenter__(self) -> "WorkflowEngineUnitOfWorkPort": ...
+    async def __aenter__(self) -> WorkflowEngineUnitOfWorkPort: ...
 
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
 
@@ -145,6 +145,7 @@ class BoardsContextPort(Protocol):
 @dataclass(frozen=True, slots=True)
 class UserSummary:
     id: UUID
+    org_id: UUID
     email: str
     display_name: str
 

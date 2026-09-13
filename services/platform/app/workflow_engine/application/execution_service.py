@@ -13,22 +13,24 @@ rule checks before a transition is allowed to fire.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import utcnow
 from app.workflow_engine.application.action_execution import ActionExecutor
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.condition_evaluation import evaluate_conditions
-from app.workflow_engine.application.dtos import WorkflowApprovalRequestDTO, WorkflowExecutionRecordDTO, WorkflowTaskStateDTO
+from app.workflow_engine.application.dtos import (
+    WorkflowApprovalRequestDTO,
+    WorkflowExecutionRecordDTO,
+    WorkflowTaskStateDTO,
+)
 from app.workflow_engine.application.ports import (
     BoardsContextPort,
     OrgPermissionCheckerPort,
     ProjectContextPort,
+    TasksContextPort,
     TaskStatusRejectedError,
     TaskSummary,
-    TasksContextPort,
 )
 from app.workflow_engine.application.rule_evaluation import RuleEvaluator
 from app.workflow_engine.domain.entities import (
@@ -37,6 +39,7 @@ from app.workflow_engine.domain.entities import (
     PendingAutomationAction,
     WorkflowApprovalRequest,
     WorkflowChecklistCompletion,
+    WorkflowDefinition,
     WorkflowExecutionRecord,
     WorkflowTaskState,
     WorkflowTransition,
@@ -52,11 +55,11 @@ from app.workflow_engine.domain.events import (
     TransitionExecuted,
 )
 from app.workflow_engine.domain.exceptions import (
-    ApprovalAlreadyDecidedError,
     ApprovalNotFoundError,
     ChecklistItemNotFoundError,
     ConditionsNotMetError,
     InvalidTransitionError,
+    ProjectNotAccessibleError,
     TaskAlreadyEnrolledError,
     TaskNotAccessibleError,
     TaskNotEnrolledError,
@@ -102,6 +105,54 @@ class WorkflowExecutionService:
         self._rule_evaluator = rule_evaluator
         self._action_executor = action_executor
 
+    async def _load_task_for_workflow(
+        self, *, workflow: WorkflowDefinition, task_id: EntityId
+    ) -> TaskSummary:
+        task = await self._tasks_context.get_task(task_id=task_id)
+        if (
+            task is None
+            or task.project_id != workflow.project_id
+            or task.org_id != workflow.org_id
+        ):
+            raise TaskNotAccessibleError(task_id)
+        return task
+
+    async def _load_workflow_for_view(
+        self,
+        uow,
+        *,
+        workflow_id: EntityId,
+        org_id: OrgId,
+        user_id: UserId,
+    ) -> WorkflowDefinition:
+        workflow = await uow.workflows.get_by_id(workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(workflow_id)
+        if workflow.org_id != org_id:
+            raise ProjectNotAccessibleError(workflow.project_id)
+        await self._authorization.assert_can_view(
+            project_id=workflow.project_id,
+            org_id=workflow.org_id,
+            user_id=user_id,
+        )
+        return workflow
+
+    async def _load_transition_for_execution(
+        self, uow, *, transition_id: EntityId, actor_user_id: UserId
+    ):
+        transition = await uow.transitions.get_by_id(transition_id)
+        if transition is None:
+            raise TransitionNotFoundError(transition_id)
+        workflow = await uow.workflows.get_by_id(transition.workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(transition.workflow_id)
+        await self._authorization.assert_can_execute(
+            project_id=workflow.project_id,
+            org_id=workflow.org_id,
+            user_id=actor_user_id,
+        )
+        return transition, workflow
+
     async def enroll_task(self, *, workflow_id: EntityId, task_id: EntityId, actor_user_id: UserId) -> WorkflowTaskStateDTO:
         async with self._uow_factory() as uow:
             workflow = await uow.workflows.get_by_id(workflow_id)
@@ -109,6 +160,7 @@ class WorkflowExecutionService:
                 raise WorkflowNotFoundError(workflow_id)
             workflow.assert_active()
             await self._authorization.assert_can_execute(project_id=workflow.project_id, org_id=workflow.org_id, user_id=actor_user_id)
+            await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
 
             if await uow.task_states.get(workflow_id, task_id) is not None:
                 raise TaskAlreadyEnrolledError()
@@ -122,15 +174,37 @@ class WorkflowExecutionService:
             await self._dispatcher.dispatch(TaskEnrolledInWorkflow(aggregate_id=task_state.id, workflow_id=workflow_id, task_id=task_id, state_id=initial_state.id))
             return _task_state_to_dto(task_state)
 
-    async def get_task_state(self, *, workflow_id: EntityId, task_id: EntityId) -> WorkflowTaskStateDTO:
+    async def get_task_state(
+        self,
+        *,
+        workflow_id: EntityId,
+        task_id: EntityId,
+        org_id: OrgId,
+        user_id: UserId,
+    ) -> WorkflowTaskStateDTO:
         async with self._uow_factory() as uow:
+            workflow = await self._load_workflow_for_view(
+                uow, workflow_id=workflow_id, org_id=org_id, user_id=user_id
+            )
+            await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
             task_state = await uow.task_states.get(workflow_id, task_id)
             if task_state is None:
                 raise TaskNotEnrolledError(task_id)
             return _task_state_to_dto(task_state)
 
-    async def list_execution_history(self, *, workflow_id: EntityId, task_id: EntityId) -> list[WorkflowExecutionRecordDTO]:
+    async def list_execution_history(
+        self,
+        *,
+        workflow_id: EntityId,
+        task_id: EntityId,
+        org_id: OrgId,
+        user_id: UserId,
+    ) -> list[WorkflowExecutionRecordDTO]:
         async with self._uow_factory() as uow:
+            workflow = await self._load_workflow_for_view(
+                uow, workflow_id=workflow_id, org_id=org_id, user_id=user_id
+            )
+            await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
             records = await uow.execution_records.list_for_task(workflow_id, task_id)
             return [_record_to_dto(r) for r in records]
 
@@ -147,22 +221,21 @@ class WorkflowExecutionService:
                 raise WorkflowNotFoundError(workflow_id)
             workflow.assert_active()
             await self._authorization.assert_can_execute(project_id=workflow.project_id, org_id=workflow.org_id, user_id=actor_user_id)
+            task_summary = await self._load_task_for_workflow(
+                workflow=workflow, task_id=task_id
+            )
 
             task_state = await uow.task_states.get(workflow_id, task_id)
             if task_state is None:
                 raise TaskNotEnrolledError(task_id)
 
             transition = await uow.transitions.get_by_id(transition_id)
-            if transition is None:
+            if transition is None or transition.workflow_id != workflow_id:
                 raise TransitionNotFoundError(transition_id)
             if not transition.enabled:
                 raise TransitionDisabledError(transition_id)
             if transition.from_state_id != task_state.current_state_id:
                 raise InvalidTransitionError(task_state.current_state_id, transition_id)
-
-            task_summary = await self._tasks_context.get_task(task_id=task_id)
-            if task_summary is None:
-                raise TaskNotAccessibleError(task_id)
 
             rules = await uow.rules.list_for_transition(transition_id)
             await self._rule_evaluator.evaluate_rules(
@@ -291,9 +364,10 @@ class WorkflowExecutionService:
 
     async def request_approval(self, *, transition_id: EntityId, task_id: EntityId, actor_user_id: UserId) -> WorkflowApprovalRequestDTO:
         async with self._uow_factory() as uow:
-            transition = await uow.transitions.get_by_id(transition_id)
-            if transition is None:
-                raise TransitionNotFoundError(transition_id)
+            transition, workflow = await self._load_transition_for_execution(
+                uow, transition_id=transition_id, actor_user_id=actor_user_id
+            )
+            await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
             approval = WorkflowApprovalRequest.create(transition_id=transition_id, task_id=task_id, requested_by=actor_user_id)
             await uow.approvals.add(approval)
             await uow.commit()
@@ -305,6 +379,14 @@ class WorkflowExecutionService:
             approval = await uow.approvals.get_by_id(approval_id)
             if approval is None:
                 raise ApprovalNotFoundError(approval_id)
+            _transition, workflow = await self._load_transition_for_execution(
+                uow,
+                transition_id=approval.transition_id,
+                actor_user_id=actor_user_id,
+            )
+            await self._load_task_for_workflow(
+                workflow=workflow, task_id=approval.task_id
+            )
             if approved:
                 approval.approve(decided_by=actor_user_id, reason=reason)
             else:
@@ -321,6 +403,12 @@ class WorkflowExecutionService:
             item = await uow.checklist_items.get_by_id(item_id)
             if item is None:
                 raise ChecklistItemNotFoundError(item_id)
+            _transition, workflow = await self._load_transition_for_execution(
+                uow,
+                transition_id=item.transition_id,
+                actor_user_id=actor_user_id,
+            )
+            await self._load_task_for_workflow(workflow=workflow, task_id=task_id)
             if await uow.checklist_completions.get(item_id, task_id) is not None:
                 return
             completion = WorkflowChecklistCompletion.create(checklist_item_id=item_id, task_id=task_id, completed_by=actor_user_id)

@@ -11,9 +11,16 @@ Projects, Tasks, and Boards all already established.
 
 from __future__ import annotations
 
-from app.workflow_engine.application.ports import OrgPermissionCheckerPort, ProjectContextPort, ProjectSummary
-from app.workflow_engine.domain.exceptions import InsufficientWorkflowPermissionError, ProjectNotAccessibleError
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.workflow_engine.application.ports import (
+    OrgPermissionCheckerPort,
+    ProjectContextPort,
+    ProjectSummary,
+)
+from app.workflow_engine.domain.exceptions import (
+    InsufficientWorkflowPermissionError,
+    ProjectNotAccessibleError,
+)
 
 _MANAGING_ROLES = ("owner", "admin", "contributor")
 
@@ -34,29 +41,48 @@ class WorkflowAuthorization:
         return member is not None and member.status == "active" and member.role in _MANAGING_ROLES
 
     async def can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="workflow", action="view"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="workflow", action="view"
+        ):
             return True
         member = await self._project_context.get_member(project_id=project_id, user_id=user_id)
         return member is not None and member.status == "active"
 
     async def can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="workflow", action="manage"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="workflow", action="manage"
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def can_execute(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="workflow", action="execute"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id, org_id=project.org_id, resource="workflow", action="execute"
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def can_manage_automation(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> bool:
-        if await self._permission_checker.has_permission(user_id=user_id, org_id=org_id, resource="workflow", action="manage_automation"):
+        project = await self.assert_project_accessible(project_id=project_id, org_id=org_id)
+        if await self._permission_checker.has_permission(
+            user_id=user_id,
+            org_id=project.org_id,
+            resource="workflow",
+            action="manage_automation",
+        ):
             return True
         return await self._has_project_role(project_id=project_id, user_id=user_id)
 
     async def assert_can_manage(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_manage(project_id=project_id, org_id=org_id, user_id=user_id):
             raise InsufficientWorkflowPermissionError(_MANAGING_ROLES)
+
+    async def assert_can_view(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
+        if not await self.can_view(project_id=project_id, org_id=org_id, user_id=user_id):
+            raise InsufficientWorkflowPermissionError(("any active project member",))
 
     async def assert_can_execute(self, *, project_id: EntityId, org_id: OrgId, user_id: UserId) -> None:
         if not await self.can_execute(project_id=project_id, org_id=org_id, user_id=user_id):

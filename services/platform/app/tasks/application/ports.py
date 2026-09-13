@@ -46,7 +46,7 @@ class TasksUnitOfWorkPort(Protocol):
     audit_logs: TasksAuditLogRepository
     outbox: OutboxWriter
 
-    async def __aenter__(self) -> "TasksUnitOfWorkPort": ...
+    async def __aenter__(self) -> TasksUnitOfWorkPort: ...
 
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
 
@@ -85,6 +85,7 @@ class ProjectContextPort(Protocol):
 @dataclass(frozen=True, slots=True)
 class UserSummary:
     id: UUID
+    org_id: UUID
     email: str
     display_name: str
 

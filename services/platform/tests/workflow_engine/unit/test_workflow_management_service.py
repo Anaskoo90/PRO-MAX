@@ -1,12 +1,21 @@
 import pytest
-
-from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary
-from app.workflow_engine.application.workflow_management import WorkflowService
-from app.workflow_engine.domain.exceptions import InsufficientWorkflowPermissionError, ProjectNotAccessibleError, WorkflowNotFoundError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
-from tests.workflow_engine.unit.fakes import AllowAllPermissionChecker, DenyAllPermissionChecker, FakeProjectContext, FakeWorkflowEngineUnitOfWork
+from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary
+from app.workflow_engine.application.workflow_management import WorkflowService
+from app.workflow_engine.domain.exceptions import (
+    InsufficientWorkflowPermissionError,
+    ProjectNotAccessibleError,
+    WorkflowNotFoundError,
+)
+
+from tests.workflow_engine.unit.fakes import (
+    AllowAllPermissionChecker,
+    DenyAllPermissionChecker,
+    FakeProjectContext,
+    FakeWorkflowEngineUnitOfWork,
+)
 
 
 def _make_service(uow, project_context, permission_checker=None) -> WorkflowService:
@@ -86,3 +95,37 @@ async def test_update_changes_name_and_description(context) -> None:
     updated = await service.update(workflow_id=workflow.id, actor_user_id=actor_id, description="Now with a description")
 
     assert updated.description == "Now with a description"
+
+
+@pytest.mark.asyncio
+async def test_workflow_reads_deny_cross_tenant_and_allow_same_tenant(context) -> None:
+    uow, project_context, project_id, org_id, actor_id = context
+    service = _make_service(uow, project_context)
+    workflow = await service.create_workflow(
+        project_id=project_id,
+        org_id=org_id,
+        actor_user_id=actor_id,
+        name="Tenant workflow",
+    )
+
+    with pytest.raises(ProjectNotAccessibleError):
+        await service.get(
+            workflow_id=workflow.id,
+            org_id=OrgId(new_uuid7()),
+            user_id=actor_id,
+        )
+    with pytest.raises(ProjectNotAccessibleError):
+        await service.list_for_project(
+            project_id=project_id,
+            org_id=OrgId(new_uuid7()),
+            user_id=actor_id,
+        )
+
+    fetched = await service.get(
+        workflow_id=workflow.id, org_id=org_id, user_id=actor_id
+    )
+    listed = await service.list_for_project(
+        project_id=project_id, org_id=org_id, user_id=actor_id
+    )
+    assert fetched.id == workflow.id
+    assert [item.id for item in listed] == [workflow.id]

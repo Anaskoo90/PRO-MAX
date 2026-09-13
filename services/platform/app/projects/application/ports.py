@@ -40,7 +40,7 @@ class ProjectsUnitOfWorkPort(Protocol):
     audit_logs: ProjectsAuditLogRepository
     outbox: OutboxWriter
 
-    async def __aenter__(self) -> "ProjectsUnitOfWorkPort": ...
+    async def __aenter__(self) -> ProjectsUnitOfWorkPort: ...
 
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
 
@@ -56,6 +56,7 @@ class OrgPermissionCheckerPort(Protocol):
 @dataclass(frozen=True, slots=True)
 class UserSummary:
     id: UUID
+    org_id: UUID
     email: str
     display_name: str
 

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, UserId
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.dtos import WorkflowStateDTO
 from app.workflow_engine.application.ports import OrgPermissionCheckerPort, ProjectContextPort
 from app.workflow_engine.domain.entities import WorkflowState, compute_position_between
 from app.workflow_engine.domain.events import StateCreated, StateDeleted, StateUpdated
-from app.workflow_engine.domain.exceptions import StateInUseError, StateNameAlreadyExistsError, StateNotFoundError, WorkflowNotFoundError
+from app.workflow_engine.domain.exceptions import (
+    ProjectNotAccessibleError,
+    StateInUseError,
+    StateNameAlreadyExistsError,
+    StateNotFoundError,
+    WorkflowNotFoundError,
+)
 
 
 def _to_dto(state: WorkflowState) -> WorkflowStateDTO:
@@ -66,8 +72,18 @@ class WorkflowStateService:
             await self._dispatcher.dispatch(StateCreated(aggregate_id=state.id, workflow_id=workflow_id, name=name))
             return _to_dto(state)
 
-    async def list_for_workflow(self, *, workflow_id: EntityId) -> list[WorkflowStateDTO]:
+    async def list_for_workflow(
+        self, *, workflow_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[WorkflowStateDTO]:
         async with self._uow_factory() as uow:
+            workflow = await uow.workflows.get_by_id(workflow_id)
+            if workflow is None:
+                raise WorkflowNotFoundError(workflow_id)
+            if workflow.org_id != org_id:
+                raise ProjectNotAccessibleError(workflow.project_id)
+            await self._authorization.assert_can_view(
+                project_id=workflow.project_id, org_id=workflow.org_id, user_id=user_id
+            )
             states = await uow.states.list_for_workflow(workflow_id)
             return [_to_dto(s) for s in states]
 
@@ -144,11 +160,15 @@ class WorkflowStateService:
             previous_position = None
             if previous_state_id is not None:
                 previous = await uow.states.get_by_id(previous_state_id)
-                previous_position = previous.position if previous else None
+                if previous is None or previous.workflow_id != state.workflow_id:
+                    raise StateNotFoundError(previous_state_id)
+                previous_position = previous.position
             next_position = None
             if next_state_id is not None:
                 nxt = await uow.states.get_by_id(next_state_id)
-                next_position = nxt.position if nxt else None
+                if nxt is None or nxt.workflow_id != state.workflow_id:
+                    raise StateNotFoundError(next_state_id)
+                next_position = nxt.position
 
             state.set_position(compute_position_between(previous_position, next_position))
             await uow.states.update(state)
@@ -157,7 +177,7 @@ class WorkflowStateService:
 
     async def delete_state(self, *, state_id: EntityId, actor_user_id: UserId) -> None:
         async with self._uow_factory() as uow:
-            state = await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
+            await self._load_state_and_authorize(uow, state_id=state_id, actor_user_id=actor_user_id)
             if await uow.transitions.references_state(state_id):
                 raise StateInUseError(state_id)
             await uow.states.delete(state_id)

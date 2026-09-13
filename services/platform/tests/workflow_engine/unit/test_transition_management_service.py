@@ -1,14 +1,24 @@
 import pytest
-
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary
 from app.workflow_engine.application.state_management import WorkflowStateService
 from app.workflow_engine.application.transition_management import WorkflowTransitionService
 from app.workflow_engine.application.workflow_management import WorkflowService
-from app.workflow_engine.domain.entities import ActionType, ConditionOperator, ConditionType, RuleType
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
-from tests.workflow_engine.unit.fakes import AllowAllPermissionChecker, FakeProjectContext, FakeWorkflowEngineUnitOfWork
+from app.workflow_engine.domain.entities import (
+    ActionType,
+    ConditionOperator,
+    ConditionType,
+    RuleType,
+)
+from app.workflow_engine.domain.exceptions import StateNotFoundError, TransitionNotFoundError
+
+from tests.workflow_engine.unit.fakes import (
+    AllowAllPermissionChecker,
+    FakeProjectContext,
+    FakeWorkflowEngineUnitOfWork,
+)
 
 
 @pytest.fixture
@@ -49,6 +59,32 @@ async def test_create_transition(context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_transition_rejects_state_from_another_workflow(context) -> None:
+    workflow_service, state_service, transition_service, project_id, org_id, actor_id = context
+    workflow, todo, _done = await _make_workflow_with_states(
+        workflow_service, state_service, project_id, org_id, actor_id
+    )
+    other_workflow = await workflow_service.create_workflow(
+        project_id=project_id,
+        org_id=org_id,
+        actor_user_id=actor_id,
+        name="Other",
+    )
+    foreign_state = await state_service.create_state(
+        workflow_id=other_workflow.id, actor_user_id=actor_id, name="Foreign"
+    )
+
+    with pytest.raises(StateNotFoundError):
+        await transition_service.create_transition(
+            workflow_id=workflow.id,
+            actor_user_id=actor_id,
+            name="Invalid",
+            from_state_id=todo.id,
+            to_state_id=foreign_state.id,
+        )
+
+
+@pytest.mark.asyncio
 async def test_disable_then_enable_transition(context) -> None:
     workflow_service, state_service, transition_service, project_id, org_id, actor_id = context
     workflow, todo, done = await _make_workflow_with_states(workflow_service, state_service, project_id, org_id, actor_id)
@@ -72,10 +108,27 @@ async def test_add_rule_action_condition_and_checklist_item(context) -> None:
     condition = await transition_service.add_condition(transition_id=transition.id, actor_user_id=actor_id, condition_type=ConditionType.PRIORITY, operator=ConditionOperator.EQUALS, value="high")
     item = await transition_service.add_checklist_item(transition_id=transition.id, actor_user_id=actor_id, label="Confirm tests pass")
 
-    assert (await transition_service.list_rules(transition_id=transition.id)) == [rule]
-    assert (await transition_service.list_actions(transition_id=transition.id)) == [action]
-    assert (await transition_service.list_conditions(transition_id=transition.id)) == [condition]
-    assert (await transition_service.list_checklist_items(transition_id=transition.id)) == [item]
+    read_context = {"org_id": org_id, "user_id": actor_id}
+    assert (
+        await transition_service.list_rules(
+            transition_id=transition.id, **read_context
+        )
+    ) == [rule]
+    assert (
+        await transition_service.list_actions(
+            transition_id=transition.id, **read_context
+        )
+    ) == [action]
+    assert (
+        await transition_service.list_conditions(
+            transition_id=transition.id, **read_context
+        )
+    ) == [condition]
+    assert (
+        await transition_service.list_checklist_items(
+            transition_id=transition.id, **read_context
+        )
+    ) == [item]
 
 
 @pytest.mark.asyncio
@@ -90,7 +143,13 @@ async def test_delete_transition_cascades_its_rules_actions_conditions_and_check
 
     await transition_service.delete_transition(transition_id=transition.id, actor_user_id=actor_id)
 
-    assert await transition_service.list_rules(transition_id=transition.id) == []
-    assert await transition_service.list_actions(transition_id=transition.id) == []
-    assert await transition_service.list_conditions(transition_id=transition.id) == []
-    assert await transition_service.list_checklist_items(transition_id=transition.id) == []
+    for list_method in (
+        transition_service.list_rules,
+        transition_service.list_actions,
+        transition_service.list_conditions,
+        transition_service.list_checklist_items,
+    ):
+        with pytest.raises(TransitionNotFoundError):
+            await list_method(
+                transition_id=transition.id, org_id=org_id, user_id=actor_id
+            )

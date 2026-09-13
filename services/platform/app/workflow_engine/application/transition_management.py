@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, UserId
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.workflow_engine.application.authorization_helpers import WorkflowAuthorization
 from app.workflow_engine.application.dtos import (
     TransitionRuleDTO,
@@ -46,6 +46,7 @@ from app.workflow_engine.domain.events import (
 from app.workflow_engine.domain.exceptions import (
     ActionNotFoundError,
     ConditionNotFoundError,
+    ProjectNotAccessibleError,
     RuleNotFoundError,
     StateNotFoundError,
     TransitionNotFoundError,
@@ -102,15 +103,43 @@ class WorkflowTransitionService:
         await self._assert_can_manage_workflow(uow, workflow_id=transition.workflow_id, actor_user_id=actor_user_id)
         return transition
 
+    async def _assert_can_view_workflow(
+        self, uow, *, workflow_id: EntityId, org_id: OrgId, user_id: UserId
+    ):
+        workflow = await uow.workflows.get_by_id(workflow_id)
+        if workflow is None:
+            raise WorkflowNotFoundError(workflow_id)
+        if workflow.org_id != org_id:
+            raise ProjectNotAccessibleError(workflow.project_id)
+        await self._authorization.assert_can_view(
+            project_id=workflow.project_id,
+            org_id=workflow.org_id,
+            user_id=user_id,
+        )
+        return workflow
+
+    async def _load_transition_and_authorize_view(
+        self, uow, *, transition_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> WorkflowTransition:
+        transition = await uow.transitions.get_by_id(transition_id)
+        if transition is None:
+            raise TransitionNotFoundError(transition_id)
+        await self._assert_can_view_workflow(
+            uow, workflow_id=transition.workflow_id, org_id=org_id, user_id=user_id
+        )
+        return transition
+
     async def create_transition(
         self, *, workflow_id: EntityId, actor_user_id: UserId, name: str, from_state_id: EntityId, to_state_id: EntityId,
         is_automatic: bool = False,
     ) -> WorkflowTransitionDTO:
         async with self._uow_factory() as uow:
             await self._assert_can_manage_workflow(uow, workflow_id=workflow_id, actor_user_id=actor_user_id)
-            if await uow.states.get_by_id(from_state_id) is None:
+            from_state = await uow.states.get_by_id(from_state_id)
+            if from_state is None or from_state.workflow_id != workflow_id:
                 raise StateNotFoundError(from_state_id)
-            if await uow.states.get_by_id(to_state_id) is None:
+            to_state = await uow.states.get_by_id(to_state_id)
+            if to_state is None or to_state.workflow_id != workflow_id:
                 raise StateNotFoundError(to_state_id)
 
             existing = await uow.transitions.list_for_workflow(workflow_id)
@@ -124,8 +153,13 @@ class WorkflowTransitionService:
             await self._dispatcher.dispatch(TransitionCreated(aggregate_id=transition.id, workflow_id=workflow_id, name=name))
             return _transition_to_dto(transition)
 
-    async def list_for_workflow(self, *, workflow_id: EntityId) -> list[WorkflowTransitionDTO]:
+    async def list_for_workflow(
+        self, *, workflow_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[WorkflowTransitionDTO]:
         async with self._uow_factory() as uow:
+            await self._assert_can_view_workflow(
+                uow, workflow_id=workflow_id, org_id=org_id, user_id=user_id
+            )
             transitions = await uow.transitions.list_for_workflow(workflow_id)
             return [_transition_to_dto(t) for t in transitions]
 
@@ -191,8 +225,13 @@ class WorkflowTransitionService:
             await uow.commit()
             return _rule_to_dto(rule)
 
-    async def list_rules(self, *, transition_id: EntityId) -> list[TransitionRuleDTO]:
+    async def list_rules(
+        self, *, transition_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[TransitionRuleDTO]:
         async with self._uow_factory() as uow:
+            await self._load_transition_and_authorize_view(
+                uow, transition_id=transition_id, org_id=org_id, user_id=user_id
+            )
             rules = await uow.rules.list_for_transition(transition_id)
             return [_rule_to_dto(r) for r in rules]
 
@@ -224,8 +263,13 @@ class WorkflowTransitionService:
             await uow.commit()
             return _action_to_dto(action)
 
-    async def list_actions(self, *, transition_id: EntityId) -> list[WorkflowActionDTO]:
+    async def list_actions(
+        self, *, transition_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[WorkflowActionDTO]:
         async with self._uow_factory() as uow:
+            await self._load_transition_and_authorize_view(
+                uow, transition_id=transition_id, org_id=org_id, user_id=user_id
+            )
             actions = await uow.actions.list_for_transition(transition_id)
             return [_action_to_dto(a) for a in actions]
 
@@ -253,8 +297,13 @@ class WorkflowTransitionService:
             await uow.commit()
             return _condition_to_dto(condition)
 
-    async def list_conditions(self, *, transition_id: EntityId) -> list[WorkflowConditionDTO]:
+    async def list_conditions(
+        self, *, transition_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[WorkflowConditionDTO]:
         async with self._uow_factory() as uow:
+            await self._load_transition_and_authorize_view(
+                uow, transition_id=transition_id, org_id=org_id, user_id=user_id
+            )
             conditions = await uow.conditions.list_for_transition(transition_id)
             return [_condition_to_dto(c) for c in conditions]
 
@@ -279,8 +328,13 @@ class WorkflowTransitionService:
             await uow.commit()
             return _checklist_item_to_dto(item)
 
-    async def list_checklist_items(self, *, transition_id: EntityId) -> list[WorkflowChecklistItemDTO]:
+    async def list_checklist_items(
+        self, *, transition_id: EntityId, org_id: OrgId, user_id: UserId
+    ) -> list[WorkflowChecklistItemDTO]:
         async with self._uow_factory() as uow:
+            await self._load_transition_and_authorize_view(
+                uow, transition_id=transition_id, org_id=org_id, user_id=user_id
+            )
             items = await uow.checklist_items.list_for_transition(transition_id)
             return [_checklist_item_to_dto(i) for i in items]
 

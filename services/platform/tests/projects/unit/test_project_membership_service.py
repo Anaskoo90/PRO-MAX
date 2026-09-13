@@ -53,7 +53,16 @@ async def test_invite_member_by_email_creates_pending_membership() -> None:
     project = await _seed_project_with_owner(uow, owner_id=owner_id)
 
     invitee_id = UserId(new_uuid7())
-    directory = FakeUserDirectory({"newperson@example.com": UserSummary(id=invitee_id, email="newperson@example.com", display_name="New Person")})
+    directory = FakeUserDirectory(
+        {
+            "newperson@example.com": UserSummary(
+                id=invitee_id,
+                org_id=project.org_id,
+                email="newperson@example.com",
+                display_name="New Person",
+            )
+        }
+    )
     service = _make_service(uow, directory)
 
     membership = await service.invite_member_by_email(
@@ -83,7 +92,16 @@ async def test_invite_existing_member_raises() -> None:
     owner_id = UserId(new_uuid7())
     project = await _seed_project_with_owner(uow, owner_id=owner_id)
 
-    directory = FakeUserDirectory({"owner@example.com": UserSummary(id=owner_id, email="owner@example.com", display_name="Owner")})
+    directory = FakeUserDirectory(
+        {
+            "owner@example.com": UserSummary(
+                id=owner_id,
+                org_id=project.org_id,
+                email="owner@example.com",
+                display_name="Owner",
+            )
+        }
+    )
     service = _make_service(uow, directory)
 
     with pytest.raises(ProjectMembershipAlreadyExistsError):

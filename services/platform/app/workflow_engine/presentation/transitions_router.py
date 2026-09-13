@@ -8,8 +8,17 @@ from uuid import UUID
 
 from fastapi import Depends
 
+from app.platform_core.api.responses import DataResponse
+from app.platform_core.api.versioning import versioned_router
+from app.platform_core.security.token import TokenClaims
 from app.workflow_engine.application.transition_management import WorkflowTransitionService
-from app.workflow_engine.domain.entities import ActionTriggerMode, ActionType, ConditionOperator, ConditionType, RuleType
+from app.workflow_engine.domain.entities import (
+    ActionTriggerMode,
+    ActionType,
+    ConditionOperator,
+    ConditionType,
+    RuleType,
+)
 from app.workflow_engine.presentation import deps
 from app.workflow_engine.presentation.schemas import (
     AddActionRequest,
@@ -25,9 +34,6 @@ from app.workflow_engine.presentation.schemas import (
     WorkflowConditionResponse,
     WorkflowTransitionResponse,
 )
-from app.platform_core.api.responses import DataResponse
-from app.platform_core.api.versioning import versioned_router
-from app.platform_core.security.token import TokenClaims
 
 router = versioned_router(version="v1", tags=["workflow-transitions"])
 
@@ -56,9 +62,14 @@ async def create_transition(
 @router.get("/workflows/{workflow_id}/transitions", response_model=DataResponse[list[WorkflowTransitionResponse]])
 async def list_transitions(
     workflow_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowTransitionService = Depends(deps.get_workflow_transition_service),
 ) -> DataResponse[list[WorkflowTransitionResponse]]:
-    transitions = await service.list_for_workflow(workflow_id=UUID(workflow_id))
+    transitions = await service.list_for_workflow(
+        workflow_id=UUID(workflow_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[_to_response(t) for t in transitions])
 
 
@@ -129,9 +140,14 @@ async def add_rule(
 @router.get("/transitions/{transition_id}/rules", response_model=DataResponse[list[TransitionRuleResponse]])
 async def list_rules(
     transition_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowTransitionService = Depends(deps.get_workflow_transition_service),
 ) -> DataResponse[list[TransitionRuleResponse]]:
-    rules = await service.list_rules(transition_id=UUID(transition_id))
+    rules = await service.list_rules(
+        transition_id=UUID(transition_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[TransitionRuleResponse(id=r.id, transition_id=r.transition_id, rule_type=r.rule_type, config=r.config) for r in rules])
 
 
@@ -167,9 +183,14 @@ async def add_action(
 @router.get("/transitions/{transition_id}/actions", response_model=DataResponse[list[WorkflowActionResponse]])
 async def list_actions(
     transition_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowTransitionService = Depends(deps.get_workflow_transition_service),
 ) -> DataResponse[list[WorkflowActionResponse]]:
-    actions = await service.list_actions(transition_id=UUID(transition_id))
+    actions = await service.list_actions(
+        transition_id=UUID(transition_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[
         WorkflowActionResponse(id=a.id, transition_id=a.transition_id, action_type=a.action_type, config=a.config, position=a.position, trigger_mode=a.trigger_mode, delay_seconds=a.delay_seconds, scheduled_at=a.scheduled_at)
         for a in actions
@@ -204,9 +225,14 @@ async def add_condition(
 @router.get("/transitions/{transition_id}/conditions", response_model=DataResponse[list[WorkflowConditionResponse]])
 async def list_conditions(
     transition_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowTransitionService = Depends(deps.get_workflow_transition_service),
 ) -> DataResponse[list[WorkflowConditionResponse]]:
-    conditions = await service.list_conditions(transition_id=UUID(transition_id))
+    conditions = await service.list_conditions(
+        transition_id=UUID(transition_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[
         WorkflowConditionResponse(id=c.id, transition_id=c.transition_id, condition_type=c.condition_type, operator=c.operator, value=c.value, position=c.position)
         for c in conditions
@@ -238,9 +264,14 @@ async def add_checklist_item(
 @router.get("/transitions/{transition_id}/checklist-items", response_model=DataResponse[list[WorkflowChecklistItemResponse]])
 async def list_checklist_items(
     transition_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowTransitionService = Depends(deps.get_workflow_transition_service),
 ) -> DataResponse[list[WorkflowChecklistItemResponse]]:
-    items = await service.list_checklist_items(transition_id=UUID(transition_id))
+    items = await service.list_checklist_items(
+        transition_id=UUID(transition_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[WorkflowChecklistItemResponse(id=i.id, transition_id=i.transition_id, label=i.label, position=i.position) for i in items])
 
 

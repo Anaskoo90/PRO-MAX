@@ -8,6 +8,9 @@ from uuid import UUID
 
 from fastapi import Depends
 
+from app.platform_core.api.responses import DataResponse
+from app.platform_core.api.versioning import versioned_router
+from app.platform_core.security.token import TokenClaims
 from app.workflow_engine.application.execution_service import WorkflowExecutionService
 from app.workflow_engine.presentation import deps
 from app.workflow_engine.presentation.schemas import (
@@ -20,9 +23,6 @@ from app.workflow_engine.presentation.schemas import (
     WorkflowExecutionRecordResponse,
     WorkflowTaskStateResponse,
 )
-from app.platform_core.api.responses import DataResponse
-from app.platform_core.api.versioning import versioned_router
-from app.platform_core.security.token import TokenClaims
 
 router = versioned_router(version="v1", tags=["workflow-execution"])
 
@@ -53,9 +53,15 @@ async def enroll_task(
 async def get_task_state(
     workflow_id: str,
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowExecutionService = Depends(deps.get_workflow_execution_service),
 ) -> DataResponse[WorkflowTaskStateResponse]:
-    task_state = await service.get_task_state(workflow_id=UUID(workflow_id), task_id=UUID(task_id))
+    task_state = await service.get_task_state(
+        workflow_id=UUID(workflow_id),
+        task_id=UUID(task_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=_task_state_response(task_state))
 
 
@@ -78,9 +84,15 @@ async def execute_transition(
 async def get_execution_history(
     workflow_id: str,
     task_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: WorkflowExecutionService = Depends(deps.get_workflow_execution_service),
 ) -> DataResponse[list[WorkflowExecutionRecordResponse]]:
-    records = await service.list_execution_history(workflow_id=UUID(workflow_id), task_id=UUID(task_id))
+    records = await service.list_execution_history(
+        workflow_id=UUID(workflow_id),
+        task_id=UUID(task_id),
+        org_id=claims.org_id,
+        user_id=claims.subject_user_id,
+    )
     return DataResponse(data=[
         WorkflowExecutionRecordResponse(
             id=r.id, workflow_id=r.workflow_id, task_id=r.task_id, transition_id=r.transition_id,

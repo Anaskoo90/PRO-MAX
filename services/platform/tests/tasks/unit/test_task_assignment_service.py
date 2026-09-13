@@ -1,5 +1,8 @@
 import pytest
-
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.notifications.dispatcher import NotificationDispatcher
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.tasks.application.ports import ProjectMemberSummary, ProjectSummary, UserSummary
 from app.tasks.application.task_assignment import TaskAssignmentService
 from app.tasks.domain.entities import Task
@@ -8,11 +11,13 @@ from app.tasks.domain.exceptions import (
     TaskAssignmentNotFoundError,
     UserNotInOrganizationError,
 )
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.notifications.dispatcher import NotificationDispatcher
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
-from tests.tasks.unit.fakes import AllowAllPermissionChecker, FakeProjectContext, FakeTasksUnitOfWork, FakeUserDirectory
+
+from tests.tasks.unit.fakes import (
+    AllowAllPermissionChecker,
+    FakeProjectContext,
+    FakeTasksUnitOfWork,
+    FakeUserDirectory,
+)
 
 
 class _FakeEmailProvider:
@@ -74,7 +79,16 @@ async def test_assign_succeeds_even_when_no_notification_provider_is_configured(
     providers registered reproduces the exact failure condition.
     """
     uow, project_context, task, actor_id, member_id = context
-    user_directory = FakeUserDirectory({member_id: UserSummary(id=member_id, email="member@example.com", display_name="Member")})
+    user_directory = FakeUserDirectory(
+        {
+            member_id: UserSummary(
+                id=member_id,
+                org_id=task.org_id,
+                email="member@example.com",
+                display_name="Member",
+            )
+        }
+    )
     service = _make_service(
         uow, project_context, user_directory=user_directory, notification_dispatcher=NotificationDispatcher(),
     )
@@ -167,13 +181,53 @@ async def test_assign_sends_a_notification_when_wired(context) -> None:
     uow, project_context, task, actor_id, member_id = context
     email_provider = _FakeEmailProvider()
     notification_dispatcher = NotificationDispatcher(email_provider=email_provider)
-    user_directory = FakeUserDirectory({member_id: UserSummary(id=member_id, email="member@example.com", display_name="Member")})
+    user_directory = FakeUserDirectory(
+        {
+            member_id: UserSummary(
+                id=member_id,
+                org_id=task.org_id,
+                email="member@example.com",
+                display_name="Member",
+            )
+        }
+    )
 
     service = _make_service(uow, project_context, user_directory=user_directory, notification_dispatcher=notification_dispatcher)
     await service.assign(task_id=task.id, actor_user_id=actor_id, assignee_user_id=member_id)
 
     assert len(email_provider.sent) == 1
     assert email_provider.sent[0].to_address == "member@example.com"
+
+
+@pytest.mark.asyncio
+async def test_assign_does_not_notify_a_cross_tenant_directory_record(context) -> None:
+    uow, project_context, task, actor_id, member_id = context
+    email_provider = _FakeEmailProvider()
+    service = _make_service(
+        uow,
+        project_context,
+        user_directory=FakeUserDirectory(
+            {
+                member_id: UserSummary(
+                    id=member_id,
+                    org_id=OrgId(new_uuid7()),
+                    email="foreign@example.com",
+                    display_name="Foreign Member",
+                )
+            }
+        ),
+        notification_dispatcher=NotificationDispatcher(
+            email_provider=email_provider
+        ),
+    )
+
+    await service.assign(
+        task_id=task.id,
+        actor_user_id=actor_id,
+        assignee_user_id=member_id,
+    )
+
+    assert email_provider.sent == []
 
 
 @pytest.mark.asyncio

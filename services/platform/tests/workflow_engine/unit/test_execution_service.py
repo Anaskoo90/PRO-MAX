@@ -1,28 +1,42 @@
 import pytest
-
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.workflow_engine.application.action_execution import ActionExecutor
 from app.workflow_engine.application.execution_service import WorkflowExecutionService
-from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary, TaskStatusRejectedError, TaskSummary
+from app.workflow_engine.application.ports import (
+    ProjectMemberSummary,
+    ProjectSummary,
+    TaskStatusRejectedError,
+    TaskSummary,
+)
 from app.workflow_engine.application.rule_evaluation import RuleEvaluator
 from app.workflow_engine.application.state_management import WorkflowStateService
 from app.workflow_engine.application.transition_management import WorkflowTransitionService
 from app.workflow_engine.application.workflow_management import WorkflowService
-from app.workflow_engine.domain.entities import ActionType, ConditionOperator, ConditionType, RuleType
+from app.workflow_engine.domain.entities import (
+    ActionType,
+    ConditionOperator,
+    ConditionType,
+    RuleType,
+)
 from app.workflow_engine.domain.exceptions import (
     ApprovalRequiredError,
     ChecklistIncompleteError,
     ConditionsNotMetError,
+    InsufficientWorkflowPermissionError,
     InvalidTransitionError,
+    ProjectNotAccessibleError,
     TaskAlreadyEnrolledError,
+    TaskNotAccessibleError,
     TaskNotEnrolledError,
     TransitionDisabledError,
+    TransitionNotFoundError,
     WorkflowHasNoInitialStateError,
 )
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.workflow_engine.unit.fakes import (
-    AllowAllPermissionChecker,
+    DenyAllPermissionChecker,
     FakeBoardsContext,
     FakeProjectContext,
     FakeTasksContext,
@@ -48,7 +62,7 @@ def context():
     )
     boards_context = FakeBoardsContext()
     dispatcher = EventDispatcher()
-    permission_checker = AllowAllPermissionChecker()
+    permission_checker = DenyAllPermissionChecker()
 
     workflow_service = WorkflowService(uow_factory=lambda: uow, dispatcher=dispatcher, permission_checker=permission_checker, project_context=project_context)
     state_service = WorkflowStateService(uow_factory=lambda: uow, dispatcher=dispatcher, permission_checker=permission_checker, project_context=project_context)
@@ -116,7 +130,12 @@ async def test_execute_transition_moves_state_and_syncs_mapped_task_status(conte
     assert result.current_state_id == done.id
     assert (context["task_id"], "done") in context["tasks_context"].status_changes
 
-    history = await context["execution_service"].list_execution_history(workflow_id=workflow.id, task_id=context["task_id"])
+    history = await context["execution_service"].list_execution_history(
+        workflow_id=workflow.id,
+        task_id=context["task_id"],
+        org_id=context["org_id"],
+        user_id=context["actor_id"],
+    )
     assert len(history) == 1
     assert history[0].from_state_id == todo.id
     assert history[0].to_state_id == done.id
@@ -229,9 +248,135 @@ async def test_automatic_transition_fires_after_manual_transition(context) -> No
     result = await context["execution_service"].execute_transition(workflow_id=workflow.id, task_id=context["task_id"], transition_id=transition.id, actor_user_id=context["actor_id"])
 
     assert result.current_state_id == archived.id
-    history = await context["execution_service"].list_execution_history(workflow_id=workflow.id, task_id=context["task_id"])
+    history = await context["execution_service"].list_execution_history(
+        workflow_id=workflow.id,
+        task_id=context["task_id"],
+        org_id=context["org_id"],
+        user_id=context["actor_id"],
+    )
     assert len(history) == 2
     assert history[1].reason == "automatic"
+
+
+@pytest.mark.asyncio
+async def test_cannot_enroll_a_task_owned_by_another_project_or_tenant(context) -> None:
+    workflow, *_ = await _make_simple_workflow(context)
+    foreign_task_id = EntityId(new_uuid7())
+    context["tasks_context"].tasks_by_id[foreign_task_id] = TaskSummary(
+        id=foreign_task_id,
+        project_id=EntityId(new_uuid7()),
+        org_id=OrgId(new_uuid7()),
+        title="Foreign task",
+        status="todo",
+        priority="medium",
+        assignee_ids=(),
+        label_ids=(),
+    )
+
+    with pytest.raises(TaskNotAccessibleError):
+        await context["execution_service"].enroll_task(
+            workflow_id=workflow.id,
+            task_id=foreign_task_id,
+            actor_user_id=context["actor_id"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_runtime_reads_enforce_the_workflows_actual_tenant(context) -> None:
+    workflow, *_ = await _make_simple_workflow(context)
+    await context["execution_service"].enroll_task(
+        workflow_id=workflow.id,
+        task_id=context["task_id"],
+        actor_user_id=context["actor_id"],
+    )
+
+    with pytest.raises(ProjectNotAccessibleError):
+        await context["execution_service"].get_task_state(
+            workflow_id=workflow.id,
+            task_id=context["task_id"],
+            org_id=OrgId(new_uuid7()),
+            user_id=context["actor_id"],
+        )
+    with pytest.raises(ProjectNotAccessibleError):
+        await context["execution_service"].list_execution_history(
+            workflow_id=workflow.id,
+            task_id=context["task_id"],
+            org_id=OrgId(new_uuid7()),
+            user_id=context["actor_id"],
+        )
+
+    state = await context["execution_service"].get_task_state(
+        workflow_id=workflow.id,
+        task_id=context["task_id"],
+        org_id=context["org_id"],
+        user_id=context["actor_id"],
+    )
+    assert state.task_id == context["task_id"]
+    assert (
+        await context["execution_service"].list_execution_history(
+            workflow_id=workflow.id,
+            task_id=context["task_id"],
+            org_id=context["org_id"],
+            user_id=context["actor_id"],
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_approval_and_checklist_mutations_reject_an_outsider(context) -> None:
+    workflow, _todo, _done, transition = await _make_simple_workflow(context)
+    item = await context["transition_service"].add_checklist_item(
+        transition_id=transition.id,
+        actor_user_id=context["actor_id"],
+        label="Security review",
+    )
+    outsider_id = UserId(new_uuid7())
+
+    with pytest.raises(InsufficientWorkflowPermissionError):
+        await context["execution_service"].request_approval(
+            transition_id=transition.id,
+            task_id=context["task_id"],
+            actor_user_id=outsider_id,
+        )
+    with pytest.raises(InsufficientWorkflowPermissionError):
+        await context["execution_service"].complete_checklist_item(
+            item_id=item.id,
+            task_id=context["task_id"],
+            actor_user_id=outsider_id,
+        )
+
+    approval = await context["execution_service"].request_approval(
+        transition_id=transition.id,
+        task_id=context["task_id"],
+        actor_user_id=context["actor_id"],
+    )
+    with pytest.raises(InsufficientWorkflowPermissionError):
+        await context["execution_service"].decide_approval(
+            approval_id=approval.id,
+            actor_user_id=outsider_id,
+            approved=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_transition_from_another_workflow_cannot_be_executed(context) -> None:
+    workflow, *_ = await _make_simple_workflow(context)
+    other_workflow, _todo, _done, other_transition = await _make_simple_workflow(context)
+    assert other_workflow.id != workflow.id
+    await context["execution_service"].enroll_task(
+        workflow_id=workflow.id,
+        task_id=context["task_id"],
+        actor_user_id=context["actor_id"],
+    )
+
+    with pytest.raises(TransitionNotFoundError):
+        await context["execution_service"].execute_transition(
+            workflow_id=workflow.id,
+            task_id=context["task_id"],
+            transition_id=other_transition.id,
+            actor_user_id=context["actor_id"],
+        )
 
 
 @pytest.mark.asyncio

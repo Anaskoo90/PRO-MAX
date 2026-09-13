@@ -26,6 +26,7 @@ class _RecordingEmailProvider:
 @pytest.mark.asyncio
 async def test_send_notification_action_delivers_through_the_wired_email_provider() -> None:
     recipient_id = UserId(new_uuid7())
+    org_id = OrgId(new_uuid7())
     email_provider = _RecordingEmailProvider()
     executor = ActionExecutor(
         tasks_context=FakeTasksContext(),
@@ -34,6 +35,7 @@ async def test_send_notification_action_delivers_through_the_wired_email_provide
             {
                 recipient_id: UserSummary(
                     id=recipient_id,
+                    org_id=org_id,
                     email="recipient@example.com",
                     display_name="Recipient",
                 )
@@ -57,7 +59,7 @@ async def test_send_notification_action_delivers_through_the_wired_email_provide
         action,
         workflow_id=EntityId(new_uuid7()),
         task_id=EntityId(new_uuid7()),
-        org_id=OrgId(new_uuid7()),
+        org_id=org_id,
         actor_user_id=UserId(new_uuid7()),
     )
 
@@ -65,3 +67,42 @@ async def test_send_notification_action_delivers_through_the_wired_email_provide
     assert email_provider.sent[0].to_address == "recipient@example.com"
     assert email_provider.sent[0].subject == "Workflow moved"
     assert email_provider.sent[0].html_body == "The task is ready."
+
+
+@pytest.mark.asyncio
+async def test_send_notification_action_rejects_a_cross_tenant_recipient() -> None:
+    recipient_id = UserId(new_uuid7())
+    email_provider = _RecordingEmailProvider()
+    executor = ActionExecutor(
+        tasks_context=FakeTasksContext(),
+        notification_dispatcher=NotificationDispatcher(email_provider=email_provider),
+        user_directory=FakeUserDirectory(
+            {
+                recipient_id: UserSummary(
+                    id=recipient_id,
+                    org_id=OrgId(new_uuid7()),
+                    email="foreign@example.com",
+                    display_name="Foreign Recipient",
+                )
+            }
+        ),
+        webhook_executor=FakeWebhookExecutor(),
+    )
+    action = WorkflowAction.create(
+        transition_id=EntityId(new_uuid7()),
+        action_type=ActionType.SEND_NOTIFICATION,
+        config={"recipient_user_id": str(recipient_id), "body": "Private update"},
+        position=1024.0,
+    )
+
+    with pytest.raises(ValueError, match="does not belong"):
+        await executor.execute(
+            object(),
+            action,
+            workflow_id=EntityId(new_uuid7()),
+            task_id=EntityId(new_uuid7()),
+            org_id=OrgId(new_uuid7()),
+            actor_user_id=UserId(new_uuid7()),
+        )
+
+    assert email_provider.sent == []

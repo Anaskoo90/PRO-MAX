@@ -1,13 +1,20 @@
 import pytest
-
-from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary
-from app.workflow_engine.application.state_management import WorkflowStateService
-from app.workflow_engine.application.workflow_management import WorkflowService
-from app.workflow_engine.domain.exceptions import StateNameAlreadyExistsError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
-from tests.workflow_engine.unit.fakes import AllowAllPermissionChecker, FakeProjectContext, FakeWorkflowEngineUnitOfWork
+from app.workflow_engine.application.ports import ProjectMemberSummary, ProjectSummary
+from app.workflow_engine.application.state_management import WorkflowStateService
+from app.workflow_engine.application.workflow_management import WorkflowService
+from app.workflow_engine.domain.exceptions import (
+    StateNameAlreadyExistsError,
+    StateNotFoundError,
+)
+
+from tests.workflow_engine.unit.fakes import (
+    AllowAllPermissionChecker,
+    FakeProjectContext,
+    FakeWorkflowEngineUnitOfWork,
+)
 
 
 @pytest.fixture
@@ -55,7 +62,9 @@ async def test_only_one_state_can_be_initial(context) -> None:
     first = await state_service.create_state(workflow_id=workflow.id, actor_user_id=actor_id, name="New", is_initial=True)
     second = await state_service.create_state(workflow_id=workflow.id, actor_user_id=actor_id, name="Triaged", is_initial=True)
 
-    states = await state_service.list_for_workflow(workflow_id=workflow.id)
+    states = await state_service.list_for_workflow(
+        workflow_id=workflow.id, org_id=org_id, user_id=actor_id
+    )
     initial_states = [s for s in states if s.is_initial]
 
     assert len(initial_states) == 1
@@ -72,10 +81,43 @@ async def test_set_initial_moves_the_flag(context) -> None:
 
     await state_service.set_initial(state_id=second.id, actor_user_id=actor_id)
 
-    states = await state_service.list_for_workflow(workflow_id=workflow.id)
+    states = await state_service.list_for_workflow(
+        workflow_id=workflow.id, org_id=org_id, user_id=actor_id
+    )
     by_id = {s.id: s for s in states}
     assert by_id[first.id].is_initial is False
     assert by_id[second.id].is_initial is True
+
+
+@pytest.mark.asyncio
+async def test_reorder_state_rejects_neighbor_from_another_workflow(context) -> None:
+    workflow_service, state_service, project_id, org_id, actor_id = context
+    first_workflow = await workflow_service.create_workflow(
+        project_id=project_id,
+        org_id=org_id,
+        actor_user_id=actor_id,
+        name="First",
+    )
+    second_workflow = await workflow_service.create_workflow(
+        project_id=project_id,
+        org_id=org_id,
+        actor_user_id=actor_id,
+        name="Second",
+    )
+    state = await state_service.create_state(
+        workflow_id=first_workflow.id, actor_user_id=actor_id, name="Todo"
+    )
+    foreign_neighbor = await state_service.create_state(
+        workflow_id=second_workflow.id, actor_user_id=actor_id, name="Done"
+    )
+
+    with pytest.raises(StateNotFoundError):
+        await state_service.reorder_state(
+            state_id=state.id,
+            actor_user_id=actor_id,
+            previous_state_id=foreign_neighbor.id,
+            next_state_id=None,
+        )
 
 
 @pytest.mark.asyncio

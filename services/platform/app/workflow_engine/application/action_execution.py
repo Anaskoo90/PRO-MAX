@@ -16,10 +16,23 @@ from datetime import datetime
 from uuid import UUID
 
 from app.platform_core.logging.logger import get_logger
-from app.platform_core.notifications.dispatcher import NotificationChannel, NotificationDispatcher, NotificationRequest
-from app.workflow_engine.application.ports import TasksContextPort, UserDirectoryPort, WebhookExecutorPort
-from app.workflow_engine.domain.entities import ActionType, ActivityEntryType, WorkflowAction, WorkflowActivityEntry
+from app.platform_core.notifications.dispatcher import (
+    NotificationChannel,
+    NotificationDispatcher,
+    NotificationRequest,
+)
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.workflow_engine.application.ports import (
+    TasksContextPort,
+    UserDirectoryPort,
+    WebhookExecutorPort,
+)
+from app.workflow_engine.domain.entities import (
+    ActionType,
+    ActivityEntryType,
+    WorkflowAction,
+    WorkflowActivityEntry,
+)
 
 _logger = get_logger("workflow_engine.action_execution")
 
@@ -51,6 +64,10 @@ class ActionExecutor:
         elif action.action_type == ActionType.SEND_NOTIFICATION:
             recipient = await self._user_directory.get_by_id(user_id=UUID(action.config["recipient_user_id"]))
             if recipient is not None:
+                if recipient.org_id != org_id:
+                    raise ValueError(
+                        "Notification recipient does not belong to the workflow organization"
+                    )
                 await self._notification_dispatcher.dispatch(
                     NotificationRequest(
                         org_id=org_id, channel=NotificationChannel(action.config.get("channel", "email")),
