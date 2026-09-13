@@ -89,6 +89,10 @@ async def test_complete_setup_creates_a_new_guild_link(context) -> None:
     assert link.org_id == org_id
     assert link.discord_guild_id == "111"
     assert link.status == "active"
+    assert [event.payload["event_type"] for event in uow.outbox.events] == [
+        "discord_integration.guild_linked"
+    ]
+    assert {event.org_id for event in uow.outbox.events} == {org_id}
 
 
 async def test_complete_setup_rejects_an_unknown_code(context) -> None:

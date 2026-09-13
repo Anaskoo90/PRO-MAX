@@ -38,6 +38,7 @@ from app.discord_integration.domain.exceptions import (
     SetupCodeExpiredError,
 )
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.security.hashing import hash_for_lookup
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
@@ -162,6 +163,7 @@ class DiscordSetupService:
                     metadata={"discord_guild_id": discord_guild_id, "discord_user_id": discord_user_id},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=link.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_guild_link_dto(link)
@@ -188,6 +190,7 @@ class DiscordSetupService:
                     actor_user_id=actor_user_id, resource_type="guild_link", resource_id=str(link.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=link.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -208,6 +211,7 @@ class DiscordSetupService:
                     metadata={"discord_guild_id": discord_guild_id, "discord_user_id": discord_user_id},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=link.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
