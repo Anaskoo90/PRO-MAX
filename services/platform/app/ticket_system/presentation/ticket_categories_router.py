@@ -15,7 +15,10 @@ from app.platform_core.errors.api_exceptions import ForbiddenError
 from app.platform_core.security.token import TokenClaims
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.presentation import deps
-from app.ticket_system.presentation.schemas import CreateTicketCategoryRequest, TicketCategoryResponse
+from app.ticket_system.presentation.schemas import (
+    CreateTicketCategoryRequest,
+    TicketCategoryResponse,
+)
 
 router = versioned_router(version="v1", tags=["ticket-categories"])
 
@@ -63,7 +66,11 @@ async def list_ticket_categories(
     service: TicketCategoryService = Depends(deps.get_ticket_category_service),
 ) -> DataResponse[list[TicketCategoryResponse]]:
     parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
-    categories = await service.list_for_guild(org_id=parsed_org_id, discord_guild_id=discord_guild_id)
+    categories = await service.list_for_guild(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        discord_guild_id=discord_guild_id,
+    )
     return DataResponse(data=[_to_response(c) for c in categories])
 
 
@@ -77,5 +84,9 @@ async def get_ticket_category(
     service: TicketCategoryService = Depends(deps.get_ticket_category_service),
 ) -> DataResponse[TicketCategoryResponse]:
     parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
-    category = await service.get(org_id=parsed_org_id, category_id=UUID(category_id))
+    category = await service.get(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        category_id=UUID(category_id),
+    )
     return DataResponse(data=_to_response(category))

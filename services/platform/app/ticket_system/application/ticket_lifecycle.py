@@ -50,6 +50,27 @@ class TicketLifecycleService:
         self._authorization = TicketAuthorization(permission_checker=permission_checker)
         self._guild_resolver = guild_resolver
 
+    async def _assert_guild_owned_by_org(
+        self, *, discord_guild_id: str, org_id: OrgId
+    ) -> None:
+        resolved_org_id = await self._guild_resolver.resolve_org_id(
+            discord_guild_id=discord_guild_id
+        )
+        if resolved_org_id is None or OrgId(resolved_org_id) != org_id:
+            raise GuildNotLinkedForTicketsError(discord_guild_id)
+
+    async def _assert_bot_ticket_still_accessible(self, ticket: Ticket) -> None:
+        """Reject stale ticket records after a Discord guild is relinked.
+
+        Bot routes intentionally use one service credential, so their
+        resource boundary is the guild's current organization link rather
+        than a JWT organization claim.
+        """
+        await self._assert_guild_owned_by_org(
+            discord_guild_id=ticket.discord_guild_id,
+            org_id=ticket.org_id,
+        )
+
     # --- Web-app-facing (JWT + GuildDesk RBAC) -----------------------------
 
     async def create_ticket(
@@ -57,6 +78,9 @@ class TicketLifecycleService:
         opener: TicketActor,
     ) -> TicketDTO:
         await self._authorization.assert_permission(org_id=org_id, user_id=actor_user_id, action="create")
+        await self._assert_guild_owned_by_org(
+            discord_guild_id=discord_guild_id, org_id=org_id
+        )
         return await self._create(
             org_id=org_id, discord_guild_id=discord_guild_id, discord_channel_id=discord_channel_id, title=title,
             opener=opener, actor_user_id=actor_user_id,
@@ -139,6 +163,7 @@ class TicketLifecycleService:
             ticket = await uow.tickets.get_by_discord_channel_id(discord_channel_id)
             if ticket is None:
                 raise TicketNotFoundError(discord_channel_id)
+            await self._assert_bot_ticket_still_accessible(ticket)
             return _to_dto(ticket)
 
     async def create_ticket_from_bot(
@@ -200,6 +225,8 @@ class TicketLifecycleService:
             ticket = await uow.tickets.get_by_id(ticket_id)
             if ticket is None or (org_id is not None and ticket.org_id != org_id):
                 raise TicketNotFoundError(ticket_id)
+            if org_id is None:
+                await self._assert_bot_ticket_still_accessible(ticket)
 
             ticket.claim(claimant=claimant)
             await uow.tickets.update(ticket)
@@ -222,6 +249,8 @@ class TicketLifecycleService:
             ticket = await uow.tickets.get_by_id(ticket_id)
             if ticket is None or (org_id is not None and ticket.org_id != org_id):
                 raise TicketNotFoundError(ticket_id)
+            if org_id is None:
+                await self._assert_bot_ticket_still_accessible(ticket)
 
             ticket.unclaim()
             await uow.tickets.update(ticket)
@@ -243,6 +272,8 @@ class TicketLifecycleService:
             ticket = await uow.tickets.get_by_id(ticket_id)
             if ticket is None or (org_id is not None and ticket.org_id != org_id):
                 raise TicketNotFoundError(ticket_id)
+            if org_id is None:
+                await self._assert_bot_ticket_still_accessible(ticket)
 
             ticket.transfer(new_claimant=new_claimant)
             await uow.tickets.update(ticket)
@@ -269,6 +300,8 @@ class TicketLifecycleService:
             ticket = await uow.tickets.get_by_id(ticket_id)
             if ticket is None or (org_id is not None and ticket.org_id != org_id):
                 raise TicketNotFoundError(ticket_id)
+            if org_id is None:
+                await self._assert_bot_ticket_still_accessible(ticket)
 
             ticket.close(actor=actor)
             await uow.tickets.update(ticket)

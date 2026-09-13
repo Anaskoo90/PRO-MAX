@@ -26,13 +26,16 @@ create_category_from_bot's org resolution for exactly this reason.
 from __future__ import annotations
 
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.ticket_system.application.authorization_helpers import TicketAuthorization
 from app.ticket_system.application.dtos import TicketCategoryDTO
 from app.ticket_system.application.ports import GuildResolverPort, OrgPermissionCheckerPort
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
 from app.ticket_system.domain.entities import TicketCategory
-from app.ticket_system.domain.exceptions import GuildNotLinkedForTicketsError, TicketCategoryNotFoundError
-from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
+from app.ticket_system.domain.exceptions import (
+    GuildNotLinkedForTicketsError,
+    TicketCategoryNotFoundError,
+)
 
 
 def _to_dto(category: TicketCategory) -> TicketCategoryDTO:
@@ -53,11 +56,23 @@ class TicketCategoryService:
         self._authorization = TicketAuthorization(permission_checker=permission_checker)
         self._guild_resolver = guild_resolver
 
+    async def _assert_guild_owned_by_org(
+        self, *, discord_guild_id: str, org_id: OrgId
+    ) -> None:
+        resolved_org_id = await self._guild_resolver.resolve_org_id(
+            discord_guild_id=discord_guild_id
+        )
+        if resolved_org_id is None or OrgId(resolved_org_id) != org_id:
+            raise GuildNotLinkedForTicketsError(discord_guild_id)
+
     async def create_category(
         self, *, org_id: OrgId, actor_user_id: UserId, discord_guild_id: str, name: str,
         discord_category_channel_id: str, staff_discord_role_ids: list[str],
     ) -> TicketCategoryDTO:
         await self._authorization.assert_permission(org_id=org_id, user_id=actor_user_id, action="manage_categories")
+        await self._assert_guild_owned_by_org(
+            discord_guild_id=discord_guild_id, org_id=org_id
+        )
         return await self._create(
             org_id=org_id, discord_guild_id=discord_guild_id, name=name,
             discord_category_channel_id=discord_category_channel_id, staff_discord_role_ids=staff_discord_role_ids,
@@ -78,7 +93,27 @@ class TicketCategoryService:
         )
 
     async def list_for_guild(
-        self, *, org_id: OrgId, discord_guild_id: str, active_only: bool = True
+        self,
+        *,
+        org_id: OrgId,
+        actor_user_id: UserId,
+        discord_guild_id: str,
+        active_only: bool = True,
+    ) -> list[TicketCategoryDTO]:
+        await self._authorization.assert_permission(
+            org_id=org_id, user_id=actor_user_id, action="read"
+        )
+        await self._assert_guild_owned_by_org(
+            discord_guild_id=discord_guild_id, org_id=org_id
+        )
+        return await self._list_for_guild(
+            org_id=org_id,
+            discord_guild_id=discord_guild_id,
+            active_only=active_only,
+        )
+
+    async def _list_for_guild(
+        self, *, org_id: OrgId, discord_guild_id: str, active_only: bool
     ) -> list[TicketCategoryDTO]:
         async with self._uow_factory() as uow:
             categories = await uow.ticket_categories.list_for_guild(discord_guild_id, active_only=active_only)
@@ -90,13 +125,26 @@ class TicketCategoryService:
         org_id = await self._guild_resolver.resolve_org_id(discord_guild_id=discord_guild_id)
         if org_id is None:
             raise GuildNotLinkedForTicketsError(discord_guild_id)
-        return await self.list_for_guild(org_id=OrgId(org_id), discord_guild_id=discord_guild_id, active_only=active_only)
+        return await self._list_for_guild(
+            org_id=OrgId(org_id),
+            discord_guild_id=discord_guild_id,
+            active_only=active_only,
+        )
 
-    async def get(self, *, org_id: OrgId, category_id: EntityId) -> TicketCategoryDTO:
+    async def get(
+        self, *, org_id: OrgId, actor_user_id: UserId, category_id: EntityId
+    ) -> TicketCategoryDTO:
+        await self._authorization.assert_permission(
+            org_id=org_id, user_id=actor_user_id, action="read"
+        )
         async with self._uow_factory() as uow:
             category = await uow.ticket_categories.get_by_id(category_id)
             if category is None or category.org_id != org_id:
                 raise TicketCategoryNotFoundError(category_id)
+            await self._assert_guild_owned_by_org(
+                discord_guild_id=category.discord_guild_id,
+                org_id=category.org_id,
+            )
             return _to_dto(category)
 
     async def _create(

@@ -7,14 +7,46 @@ identity_module.seed()) is never triggered.
 
 from __future__ import annotations
 
+from app.main import app, identity_module
+from app.platform_core.shared_kernel.dtos import PagedResult
+from app.platform_core.shared_kernel.utils import new_uuid7
+from app.ticket_system.presentation import deps
 from fastapi.testclient import TestClient
-
-from app.main import app
 
 client = TestClient(app)
 
 _ORG_ID = "00000000-0000-7000-8000-000000000000"
 _TICKET_ID = "00000000-0000-7000-8000-000000000001"
+
+
+def _headers(org_id) -> dict[str, str]:
+    token = identity_module.token_service.issue_access_token(
+        user_id=new_uuid7(), org_id=org_id, scopes=[]
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+class _TicketServiceSpy:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def search_for_org(self, **kwargs):
+        self.calls.append(kwargs)
+        return PagedResult(
+            items=[],
+            total=0,
+            page=kwargs["page"],
+            page_size=kwargs["page_size"],
+        )
+
+
+class _CategoryServiceSpy:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def list_for_guild(self, **kwargs):
+        self.calls.append(kwargs)
+        return []
 
 
 def test_create_ticket_without_authorization_header_is_rejected() -> None:
@@ -28,6 +60,60 @@ def test_create_ticket_without_authorization_header_is_rejected() -> None:
 def test_list_tickets_without_authorization_header_is_rejected() -> None:
     response = client.get(f"/api/v1/organizations/{_ORG_ID}/tickets")
     assert response.status_code == 401
+
+
+def test_ticket_and_category_lists_reject_cross_tenant_path_ids() -> None:
+    caller_org_id = new_uuid7()
+    other_org_id = new_uuid7()
+    ticket_service = _TicketServiceSpy()
+    category_service = _CategoryServiceSpy()
+    app.dependency_overrides[deps.get_ticket_lifecycle_service] = lambda: ticket_service
+    app.dependency_overrides[deps.get_ticket_category_service] = lambda: category_service
+
+    try:
+        headers = _headers(caller_org_id)
+        tickets = client.get(
+            f"/api/v1/organizations/{other_org_id}/tickets", headers=headers
+        )
+        categories = client.get(
+            f"/api/v1/organizations/{other_org_id}/ticket-categories",
+            params={"discord_guild_id": "111"},
+            headers=headers,
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_ticket_lifecycle_service, None)
+        app.dependency_overrides.pop(deps.get_ticket_category_service, None)
+
+    assert (tickets.status_code, categories.status_code) == (403, 403)
+    assert ticket_service.calls == []
+    assert category_service.calls == []
+
+
+def test_ticket_and_category_lists_allow_same_tenant_calls() -> None:
+    org_id = new_uuid7()
+    ticket_service = _TicketServiceSpy()
+    category_service = _CategoryServiceSpy()
+    app.dependency_overrides[deps.get_ticket_lifecycle_service] = lambda: ticket_service
+    app.dependency_overrides[deps.get_ticket_category_service] = lambda: category_service
+
+    try:
+        headers = _headers(org_id)
+        tickets = client.get(
+            f"/api/v1/organizations/{org_id}/tickets", headers=headers
+        )
+        categories = client.get(
+            f"/api/v1/organizations/{org_id}/ticket-categories",
+            params={"discord_guild_id": "111"},
+            headers=headers,
+        )
+    finally:
+        app.dependency_overrides.pop(deps.get_ticket_lifecycle_service, None)
+        app.dependency_overrides.pop(deps.get_ticket_category_service, None)
+
+    assert (tickets.status_code, categories.status_code) == (200, 200)
+    assert ticket_service.calls[0]["org_id"] == org_id
+    assert category_service.calls[0]["org_id"] == org_id
+    assert category_service.calls[0]["actor_user_id"] is not None
 
 
 def test_get_ticket_without_authorization_header_is_rejected() -> None:

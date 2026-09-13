@@ -1,5 +1,8 @@
 import pytest
-
+from app.platform_core.api.sorting import SortField
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.shared_kernel.types import OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
 from app.ticket_system.domain.exceptions import (
     GuildNotLinkedForTicketsError,
@@ -8,10 +11,7 @@ from app.ticket_system.domain.exceptions import (
     TicketNotFoundError,
 )
 from app.ticket_system.domain.value_objects import TicketActor
-from app.platform_core.api.sorting import SortField
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.ticket_system.unit.fakes import (
     AllowAllPermissionChecker,
     AllowOnlyActionsPermissionChecker,
@@ -24,16 +24,23 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_service(uow, permission_checker=None, guild_resolver=None) -> TicketLifecycleService:
+    if guild_resolver is None:
+        guild_resolver = FakeGuildResolver(
+            org_ids_by_guild=uow.linked_orgs_by_guild
+        )
     return TicketLifecycleService(
         uow_factory=lambda: uow, dispatcher=EventDispatcher(),
         permission_checker=permission_checker or AllowAllPermissionChecker(),
-        guild_resolver=guild_resolver or FakeGuildResolver(),
+        guild_resolver=guild_resolver,
     )
 
 
 @pytest.fixture
 def context():
-    return FakeTicketUnitOfWork(), OrgId(new_uuid7()), UserId(new_uuid7())
+    uow = FakeTicketUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    uow.linked_orgs_by_guild = {"111": org_id}
+    return uow, org_id, UserId(new_uuid7())
 
 
 async def test_create_ticket_succeeds_for_a_permitted_user(context) -> None:
@@ -59,6 +66,28 @@ async def test_create_ticket_rejects_a_user_without_permission(context) -> None:
             org_id=org_id, actor_user_id=actor_id, discord_guild_id="111", discord_channel_id="222",
             title="Need help", opener=TicketActor(discord_user_id="333"),
         )
+
+
+async def test_create_ticket_rejects_an_unlinked_or_foreign_guild(context) -> None:
+    uow, org_id, actor_id = context
+    other_org_id = OrgId(new_uuid7())
+    service = _make_service(
+        uow,
+        guild_resolver=FakeGuildResolver(
+            org_ids_by_guild={"foreign": other_org_id}
+        ),
+    )
+
+    for guild_id in ("unlinked", "foreign"):
+        with pytest.raises(GuildNotLinkedForTicketsError):
+            await service.create_ticket(
+                org_id=org_id,
+                actor_user_id=actor_id,
+                discord_guild_id=guild_id,
+                discord_channel_id="222",
+                title="Must be rejected",
+                opener=TicketActor(discord_user_id="333"),
+            )
 
 
 async def test_create_ticket_allocates_sequential_numbers_per_org(context) -> None:
@@ -203,6 +232,7 @@ async def test_list_for_org_returns_only_the_orgs_own_tickets(context) -> None:
 
     other_org_id = OrgId(new_uuid7())
     other_actor_id = UserId(new_uuid7())
+    uow.linked_orgs_by_guild["444"] = other_org_id
     await service.create_ticket(
         org_id=other_org_id, actor_user_id=other_actor_id, discord_guild_id="444", discord_channel_id="555",
         title="Theirs", opener=TicketActor(discord_user_id="2"),
@@ -235,6 +265,7 @@ async def test_search_for_org_returns_only_the_orgs_own_tickets_with_a_total_cou
 
     other_org_id = OrgId(new_uuid7())
     other_actor_id = UserId(new_uuid7())
+    uow.linked_orgs_by_guild["444"] = other_org_id
     await service.create_ticket(
         org_id=other_org_id, actor_user_id=other_actor_id, discord_guild_id="444", discord_channel_id="555",
         title="Theirs", opener=TicketActor(discord_user_id="2"),
@@ -532,3 +563,30 @@ async def test_get_by_discord_channel_id_raises_for_an_unknown_channel(context) 
 
     with pytest.raises(TicketNotFoundError):
         await service.get_by_discord_channel_id(discord_channel_id="does-not-exist")
+
+
+async def test_bot_cannot_access_a_ticket_after_its_guild_is_relinked(context) -> None:
+    uow, org_id, actor_id = context
+    creator = _make_service(uow)
+    ticket = await creator.create_ticket(
+        org_id=org_id,
+        actor_user_id=actor_id,
+        discord_guild_id="111",
+        discord_channel_id="222",
+        title="Stale after relink",
+        opener=TicketActor(discord_user_id="333"),
+    )
+    after_relink = _make_service(
+        uow,
+        guild_resolver=FakeGuildResolver(
+            org_ids_by_guild={"111": OrgId(new_uuid7())}
+        ),
+    )
+
+    with pytest.raises(GuildNotLinkedForTicketsError):
+        await after_relink.get_by_discord_channel_id(discord_channel_id="222")
+    with pytest.raises(GuildNotLinkedForTicketsError):
+        await after_relink.claim_ticket_from_bot(
+            ticket_id=ticket.id,
+            claimant=TicketActor(discord_user_id="777"),
+        )

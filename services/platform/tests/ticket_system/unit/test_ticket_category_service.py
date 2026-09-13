@@ -1,14 +1,15 @@
 import pytest
-
+from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.shared_kernel.types import OrgId, UserId
+from app.platform_core.shared_kernel.utils import new_uuid7
 from app.ticket_system.application.ticket_categories import TicketCategoryService
+from app.ticket_system.domain.entities import TicketCategory
 from app.ticket_system.domain.exceptions import (
     GuildNotLinkedForTicketsError,
     InsufficientTicketPermissionError,
     TicketCategoryNotFoundError,
 )
-from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import OrgId, UserId
-from app.platform_core.shared_kernel.utils import new_uuid7
+
 from tests.ticket_system.unit.fakes import (
     AllowAllPermissionChecker,
     DenyAllPermissionChecker,
@@ -20,16 +21,23 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_service(uow, permission_checker=None, guild_resolver=None) -> TicketCategoryService:
+    if guild_resolver is None:
+        guild_resolver = FakeGuildResolver(
+            org_ids_by_guild=uow.linked_orgs_by_guild
+        )
     return TicketCategoryService(
         uow_factory=lambda: uow, dispatcher=EventDispatcher(),
         permission_checker=permission_checker or AllowAllPermissionChecker(),
-        guild_resolver=guild_resolver or FakeGuildResolver(),
+        guild_resolver=guild_resolver,
     )
 
 
 @pytest.fixture
 def context():
-    return FakeTicketUnitOfWork(), OrgId(new_uuid7()), UserId(new_uuid7())
+    uow = FakeTicketUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    uow.linked_orgs_by_guild = {"111": org_id}
+    return uow, org_id, UserId(new_uuid7())
 
 
 async def test_create_category_succeeds_for_a_permitted_user(context) -> None:
@@ -58,6 +66,27 @@ async def test_create_category_rejects_a_user_without_permission(context) -> Non
         )
 
 
+async def test_create_category_rejects_an_unlinked_or_foreign_guild(context) -> None:
+    uow, org_id, actor_id = context
+    service = _make_service(
+        uow,
+        guild_resolver=FakeGuildResolver(
+            org_ids_by_guild={"foreign": OrgId(new_uuid7())}
+        ),
+    )
+
+    for guild_id in ("unlinked", "foreign"):
+        with pytest.raises(GuildNotLinkedForTicketsError):
+            await service.create_category(
+                org_id=org_id,
+                actor_user_id=actor_id,
+                discord_guild_id=guild_id,
+                name="Invalid",
+                discord_category_channel_id="222",
+                staff_discord_role_ids=[],
+            )
+
+
 async def test_list_for_guild_returns_only_that_guilds_categories(context) -> None:
     uow, org_id, actor_id = context
     service = _make_service(uow)
@@ -65,12 +94,19 @@ async def test_list_for_guild_returns_only_that_guilds_categories(context) -> No
         org_id=org_id, actor_user_id=actor_id, discord_guild_id="111", name="Ours",
         discord_category_channel_id="222", staff_discord_role_ids=[],
     )
-    await service.create_category(
-        org_id=OrgId(new_uuid7()), actor_user_id=UserId(new_uuid7()), discord_guild_id="444", name="Theirs",
-        discord_category_channel_id="555", staff_discord_role_ids=[],
+    await uow.ticket_categories.add(
+        TicketCategory.create(
+            org_id=OrgId(new_uuid7()),
+            discord_guild_id="444",
+            name="Theirs",
+            discord_category_channel_id="555",
+            staff_discord_role_ids=[],
+        )
     )
 
-    categories = await service.list_for_guild(org_id=org_id, discord_guild_id="111")
+    categories = await service.list_for_guild(
+        org_id=org_id, actor_user_id=actor_id, discord_guild_id="111"
+    )
 
     assert len(categories) == 1
     assert categories[0].name == "Ours"
@@ -90,22 +126,60 @@ async def test_list_for_guild_excludes_a_stale_category_from_a_different_org_sha
         discord_category_channel_id="222", staff_discord_role_ids=[],
     )
     other_org_id = OrgId(new_uuid7())
-    await service.create_category(
-        org_id=other_org_id, actor_user_id=UserId(new_uuid7()), discord_guild_id="111", name="StaleFromOtherOrg",
-        discord_category_channel_id="333", staff_discord_role_ids=[],
+    await uow.ticket_categories.add(
+        TicketCategory.create(
+            org_id=other_org_id,
+            discord_guild_id="111",
+            name="StaleFromOtherOrg",
+            discord_category_channel_id="333",
+            staff_discord_role_ids=[],
+        )
     )
 
-    categories = await service.list_for_guild(org_id=org_id, discord_guild_id="111")
+    categories = await service.list_for_guild(
+        org_id=org_id, actor_user_id=actor_id, discord_guild_id="111"
+    )
 
     assert [c.name for c in categories] == ["Ours"]
 
 
+async def test_category_reads_require_ticket_read_permission(context) -> None:
+    uow, org_id, actor_id = context
+    creator = _make_service(uow)
+    category = await creator.create_category(
+        org_id=org_id,
+        actor_user_id=actor_id,
+        discord_guild_id="111",
+        name="Private",
+        discord_category_channel_id="222",
+        staff_discord_role_ids=[],
+    )
+    denying_service = _make_service(
+        uow, permission_checker=DenyAllPermissionChecker()
+    )
+
+    with pytest.raises(InsufficientTicketPermissionError):
+        await denying_service.list_for_guild(
+            org_id=org_id,
+            actor_user_id=actor_id,
+            discord_guild_id="111",
+        )
+    with pytest.raises(InsufficientTicketPermissionError):
+        await denying_service.get(
+            org_id=org_id,
+            actor_user_id=actor_id,
+            category_id=category.id,
+        )
+
+
 async def test_get_raises_not_found_for_an_unknown_category(context) -> None:
-    uow, org_id, _actor_id = context
+    uow, org_id, actor_id = context
     service = _make_service(uow)
 
     with pytest.raises(TicketCategoryNotFoundError):
-        await service.get(org_id=org_id, category_id=new_uuid7())
+        await service.get(
+            org_id=org_id, actor_user_id=actor_id, category_id=new_uuid7()
+        )
 
 
 async def test_get_returns_the_created_category(context) -> None:
@@ -116,7 +190,9 @@ async def test_get_returns_the_created_category(context) -> None:
         discord_category_channel_id="222", staff_discord_role_ids=[],
     )
 
-    fetched = await service.get(org_id=org_id, category_id=created.id)
+    fetched = await service.get(
+        org_id=org_id, actor_user_id=actor_id, category_id=created.id
+    )
 
     assert fetched.id == created.id
     assert fetched.name == "Billing"
@@ -135,7 +211,11 @@ async def test_get_rejects_a_category_belonging_to_another_org(context) -> None:
 
     other_org_id = OrgId(new_uuid7())
     with pytest.raises(TicketCategoryNotFoundError):
-        await service.get(org_id=other_org_id, category_id=created.id)
+        await service.get(
+            org_id=other_org_id,
+            actor_user_id=actor_id,
+            category_id=created.id,
+        )
 
 
 async def test_list_for_guild_from_bot_resolves_org_and_filters(context) -> None:
@@ -145,9 +225,14 @@ async def test_list_for_guild_from_bot_resolves_org_and_filters(context) -> None
         org_id=org_id, actor_user_id=actor_id, discord_guild_id="111", name="Ours",
         discord_category_channel_id="222", staff_discord_role_ids=[],
     )
-    await service.create_category(
-        org_id=OrgId(new_uuid7()), actor_user_id=UserId(new_uuid7()), discord_guild_id="111", name="StaleFromOtherOrg",
-        discord_category_channel_id="333", staff_discord_role_ids=[],
+    await uow.ticket_categories.add(
+        TicketCategory.create(
+            org_id=OrgId(new_uuid7()),
+            discord_guild_id="111",
+            name="StaleFromOtherOrg",
+            discord_category_channel_id="333",
+            staff_discord_role_ids=[],
+        )
     )
 
     categories = await service.list_for_guild_from_bot(discord_guild_id="111")
