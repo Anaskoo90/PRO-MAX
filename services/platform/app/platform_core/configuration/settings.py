@@ -17,6 +17,7 @@ import base64
 import binascii
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import (
     AnyHttpUrl,
@@ -88,6 +89,14 @@ class PlatformSettings(BaseSettings):
     oauth_discord_client_secret: SecretStr | None = None
     oauth_discord_redirect_uri: AnyHttpUrl | None = None
 
+    storage_backend: Literal["local", "s3"] = "local"
+    local_storage_path: Path = Path("./.local-storage")
+    s3_endpoint_url: AnyHttpUrl | None = None
+    s3_region: str = "us-east-1"
+    s3_bucket: str | None = None
+    s3_access_key: SecretStr | None = None
+    s3_secret_key: SecretStr | None = None
+
     otel_exporter_endpoint: str | None = None
 
     @field_validator(
@@ -97,6 +106,10 @@ class PlatformSettings(BaseSettings):
         "oauth_discord_client_id",
         "oauth_discord_client_secret",
         "oauth_discord_redirect_uri",
+        "s3_endpoint_url",
+        "s3_bucket",
+        "s3_access_key",
+        "s3_secret_key",
         mode="before",
     )
     @classmethod
@@ -135,12 +148,18 @@ class PlatformSettings(BaseSettings):
                 "oauth_discord_client_id, oauth_discord_client_secret, and "
                 "oauth_discord_redirect_uri must be configured together"
             )
+        if (self.s3_access_key is None) != (self.s3_secret_key is None):
+            raise ValueError("s3_access_key and s3_secret_key must be configured together")
+        if self.storage_backend == "s3" and not self.s3_bucket:
+            raise ValueError("s3_bucket must be configured when storage_backend is 's3'")
         if self.environment.is_production_like and not self.cors_allowed_origins:
             raise ValueError(
                 "cors_allowed_origins must be explicitly set in staging/production"
             )
         if self.environment.is_production_like and not self.smtp_host:
             raise ValueError("smtp_host must be configured in staging/production")
+        if self.environment.is_production_like and self.storage_backend != "s3":
+            raise ValueError("storage_backend must be 's3' in staging/production")
         return self
 
 

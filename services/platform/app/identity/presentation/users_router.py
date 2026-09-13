@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from fastapi import Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 
-from app.identity.application.user_management import UserManagementService
+from app.identity.application.user_management import MAX_AVATAR_BYTES, UserManagementService
+from app.identity.domain.exceptions import InvalidAvatarError
 from app.identity.presentation import deps
 from app.identity.presentation.authorization import require_permission
 from app.identity.presentation.schemas import (
@@ -18,6 +20,7 @@ from app.platform_core.api.versioning import versioned_router
 from app.platform_core.security.token import TokenClaims
 
 router = versioned_router(version="v1", tags=["users"])
+_UPLOAD_READ_CHUNK_BYTES = 64 * 1024
 
 
 def _to_response(dto) -> UserProfileResponse:
@@ -69,14 +72,37 @@ async def update_my_avatar(
     claims: TokenClaims = Depends(deps.get_current_user_claims),
     service: UserManagementService = Depends(deps.get_user_management_service),
 ) -> DataResponse[UserProfileResponse]:
-    content = await file.read()
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(_UPLOAD_READ_CHUNK_BYTES):
+        size += len(chunk)
+        if size > MAX_AVATAR_BYTES:
+            raise InvalidAvatarError(
+                f"Avatar exceeds the {MAX_AVATAR_BYTES} byte upload limit"
+            )
+        chunks.append(chunk)
     profile = await service.update_avatar(
         user_id=claims.subject_user_id,
-        content=content,
+        content=b"".join(chunks),
         content_type=file.content_type or "application/octet-stream",
-        filename=file.filename or "avatar",
     )
     return DataResponse(data=_to_response(profile))
+
+
+@router.get("/users/me/avatar", response_class=StreamingResponse)
+async def get_my_avatar(
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: UserManagementService = Depends(deps.get_user_management_service),
+) -> StreamingResponse:
+    avatar = await service.get_avatar(user_id=claims.subject_user_id)
+    return StreamingResponse(
+        avatar.chunks,
+        media_type=avatar.content_type,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.put("/users/me/preferences", response_model=DataResponse[UserProfileResponse])

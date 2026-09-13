@@ -99,6 +99,16 @@ class UserNotFoundError(EntityNotFoundError):
         super().__init__("User", user_id)
 
 
+class AvatarNotFoundError(EntityNotFoundError):
+    def __init__(self, user_id: object) -> None:
+        super().__init__("Avatar", user_id)
+
+
+class InvalidAvatarError(BusinessRuleViolationError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("invalid_avatar", reason)
+
+
 class SessionNotFoundError(EntityNotFoundError):
     def __init__(self, session_id: object) -> None:
         super().__init__("Session", session_id)

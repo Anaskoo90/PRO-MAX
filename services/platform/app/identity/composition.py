@@ -12,8 +12,10 @@ identical from app/main.py's point of view.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Any
 
+import aioboto3
+from botocore.config import Config
 from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -75,7 +77,9 @@ from app.platform_core.notifications.email_provider import SmtpEmailProvider
 from app.platform_core.security.encryption import FieldEncryptionService
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
+from app.platform_core.storage.interfaces import FileStorageProvider
 from app.platform_core.storage.local_provider import LocalFileStorageProvider
+from app.platform_core.storage.object_storage_provider import S3CompatibleStorageProvider
 
 _logger = get_logger("identity.composition")
 
@@ -135,7 +139,25 @@ class IdentityModule:
                 timeout_seconds=settings.smtp_timeout_seconds,
             )
         self.notification_dispatcher = NotificationDispatcher(email_provider=email_provider)
-        self.file_storage = LocalFileStorageProvider(Path("./.local-storage/avatars"))
+        self.file_storage: FileStorageProvider
+        if settings.storage_backend == "s3":
+            s3_session = aioboto3.Session()
+            client_kwargs: dict[str, Any] = {
+                "service_name": "s3",
+                "region_name": settings.s3_region,
+                "config": Config(signature_version="s3v4"),
+            }
+            if settings.s3_endpoint_url:
+                client_kwargs["endpoint_url"] = str(settings.s3_endpoint_url).rstrip("/")
+            if settings.s3_access_key and settings.s3_secret_key:
+                client_kwargs["aws_access_key_id"] = settings.s3_access_key.get_secret_value()
+                client_kwargs["aws_secret_access_key"] = settings.s3_secret_key.get_secret_value()
+            self.file_storage = S3CompatibleStorageProvider(
+                bucket=settings.s3_bucket or "",
+                client_factory=lambda: s3_session.client(**client_kwargs),
+            )
+        else:
+            self.file_storage = LocalFileStorageProvider(settings.local_storage_path)
 
         web_app_base_url = str(settings.web_app_base_url).rstrip("/")
 

@@ -89,6 +89,37 @@ def test_discord_oauth_configuration_must_be_complete(monkeypatch: pytest.Monkey
         PlatformSettings(_env_file=None)
 
 
+def test_s3_storage_requires_a_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+
+    with pytest.raises(ValueError, match="s3_bucket"):
+        PlatformSettings(_env_file=None)
+
+
+def test_s3_credentials_must_be_configured_as_a_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("S3_ACCESS_KEY", "access")
+    monkeypatch.delenv("S3_SECRET_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="must be configured together"):
+        PlatformSettings(_env_file=None)
+
+
+def test_production_configuration_rejects_local_file_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required_configuration(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", '["https://app.example.com"]')
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+
+    with pytest.raises(ValueError, match="storage_backend"):
+        PlatformSettings(_env_file=None)
+
+
 def test_password_hash_round_trips() -> None:
     service = PasswordHashingService()
     hashed = service.hash("Correct-Horse-Battery-Staple-9")

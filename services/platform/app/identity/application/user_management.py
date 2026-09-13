@@ -12,23 +12,72 @@ rather than one submodule importing the other.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any
 
 from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.entities import PasswordHistoryEntry, User
 from app.identity.domain.exceptions import (
+    AvatarNotFoundError,
     EmailAlreadyRegisteredError,
+    InvalidAvatarError,
     UserNotFoundError,
     WeakPasswordError,
 )
 from app.identity.domain.value_objects import Email
+from app.platform_core.errors.infrastructure_exceptions import StorageError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
+from app.platform_core.logging.logger import get_logger
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.password_policy import DEFAULT_PASSWORD_POLICY, PasswordPolicy
 from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.platform_core.storage.interfaces import FileStorageProvider
-from app.platform_core.storage.upload_contracts import UploadRequest
+
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
+_AVATAR_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+}
+_logger = get_logger("identity.user_management")
+
+
+@dataclass(frozen=True, slots=True)
+class AvatarContent:
+    chunks: AsyncIterator[bytes]
+    content_type: str
+
+
+def _validate_avatar(content: bytes, content_type: str) -> str:
+    normalized_type = content_type.lower().strip()
+    if normalized_type not in _AVATAR_EXTENSIONS:
+        raise InvalidAvatarError("Avatar must be a PNG, JPEG, or GIF image")
+    if not content:
+        raise InvalidAvatarError("Avatar must not be empty")
+    if len(content) > MAX_AVATAR_BYTES:
+        raise InvalidAvatarError(f"Avatar exceeds the {MAX_AVATAR_BYTES} byte upload limit")
+
+    signature_is_valid = {
+        "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg": content.startswith(b"\xff\xd8\xff") and content.endswith(b"\xff\xd9"),
+        "image/gif": content.startswith((b"GIF87a", b"GIF89a")),
+    }[normalized_type]
+    if not signature_is_valid:
+        raise InvalidAvatarError("Avatar bytes do not match the declared image type")
+    return normalized_type
+
+
+def _avatar_content_type(storage_key: str) -> str:
+    extension = storage_key.rsplit(".", maxsplit=1)[-1].lower()
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+    }.get(extension, "application/octet-stream")
 
 
 class UserManagementService:
@@ -102,20 +151,72 @@ class UserManagementService:
             await uow.commit()
             return user_to_profile_dto(user)
 
-    async def update_avatar(self, *, user_id: EntityId, content: bytes, content_type: str, filename: str) -> UserProfileDTO:
-        UploadRequest(filename=filename, content_type=content_type, size_bytes=len(content))  # raises on invalid upload
+    async def update_avatar(
+        self, *, user_id: EntityId, content: bytes, content_type: str
+    ) -> UserProfileDTO:
+        normalized_type = _validate_avatar(content, content_type)
 
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
 
-            storage_key = f"avatars/{user.org_id}/{user.id}/{filename}"
-            await self._file_storage.put(key=storage_key, content=content, content_type=content_type)
+            extension = _AVATAR_EXTENSIONS[normalized_type]
+            digest = sha256(content).hexdigest()
+            storage_key = f"avatars/{user.org_id}/{user.id}/{digest}.{extension}"
+            previous_storage_key = user.avatar_storage_key
+            await self._file_storage.put(
+                key=storage_key, content=content, content_type=normalized_type
+            )
             user.update_avatar(storage_key)
-            await uow.users.update(user)
-            await uow.commit()
+            try:
+                await uow.users.update(user)
+                await uow.commit()
+            except Exception:
+                try:
+                    await self._file_storage.delete(key=storage_key)
+                except StorageError:
+                    await _logger.aerror(
+                        "avatar_rollback_cleanup_failed",
+                        storage_key=storage_key,
+                        exc_info=True,
+                    )
+                raise
+
+            if previous_storage_key and previous_storage_key != storage_key:
+                try:
+                    await self._file_storage.delete(key=previous_storage_key)
+                except StorageError:
+                    # The database already points at the new immutable object;
+                    # failed garbage collection must not turn a successful
+                    # update into a misleading client-visible failure.
+                    await _logger.aerror(
+                        "previous_avatar_cleanup_failed",
+                        storage_key=previous_storage_key,
+                        exc_info=True,
+                    )
+            await self._audit_logger.record(
+                org_id=user.org_id,
+                actor_id=user.id,
+                action="user_avatar_updated",
+                resource_type="user",
+                resource_id=str(user.id),
+            )
             return user_to_profile_dto(user)
+
+    async def get_avatar(self, *, user_id: EntityId) -> AvatarContent:
+        async with self._uow_factory() as uow:
+            user = await uow.users.get_by_id(user_id)
+            if user is None:
+                raise UserNotFoundError(user_id)
+            storage_key = user.avatar_storage_key
+
+        if not storage_key or not await self._file_storage.exists(key=storage_key):
+            raise AvatarNotFoundError(user_id)
+        return AvatarContent(
+            chunks=self._file_storage.get(key=storage_key),
+            content_type=_avatar_content_type(storage_key),
+        )
 
     async def update_preferences(self, *, user_id: EntityId, preferences: dict[str, Any]) -> UserProfileDTO:
         async with self._uow_factory() as uow:

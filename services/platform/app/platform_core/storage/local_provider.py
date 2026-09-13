@@ -3,11 +3,12 @@ and CI only — never selected when EnvironmentProfile.is_production_like."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 import aiofiles
 
+from app.platform_core.errors.infrastructure_exceptions import StorageError
 from app.platform_core.storage.interfaces import StoredFileRef
 
 
@@ -24,22 +25,34 @@ class LocalFileStorageProvider:
 
     async def put(self, *, key: str, content: bytes, content_type: str) -> StoredFileRef:
         path = self._resolve(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(path, "wb") as f:
-            await f.write(content)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(path, "wb") as f:
+                await f.write(content)
+        except OSError as exc:
+            raise StorageError(f"Failed to store local object '{key}'") from exc
         return StoredFileRef(storage_key=key, size_bytes=len(content), content_type=content_type)
 
     async def get(self, *, key: str) -> AsyncIterator[bytes]:
         path = self._resolve(key)
-        async with aiofiles.open(path, "rb") as f:
-            while chunk := await f.read(65536):
-                yield chunk
+        try:
+            async with aiofiles.open(path, "rb") as f:
+                while chunk := await f.read(65536):
+                    yield chunk
+        except OSError as exc:
+            raise StorageError(f"Failed to read local object '{key}'") from exc
 
     async def delete(self, *, key: str) -> None:
-        self._resolve(key).unlink(missing_ok=True)
+        try:
+            self._resolve(key).unlink(missing_ok=True)
+        except OSError as exc:
+            raise StorageError(f"Failed to delete local object '{key}'") from exc
 
     async def exists(self, *, key: str) -> bool:
-        return self._resolve(key).exists()
+        try:
+            return self._resolve(key).exists()
+        except OSError as exc:
+            raise StorageError(f"Failed to inspect local object '{key}'") from exc
 
     async def generate_presigned_url(self, *, key: str, ttl_seconds: int) -> str:
         raise NotImplementedError(
