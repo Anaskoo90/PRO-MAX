@@ -21,8 +21,14 @@ from app.identity.domain.exceptions import (
     RoleNotFoundError,
     UserNotFoundError,
 )
-from app.identity.domain.rbac import Role, UserRoleAssignment
+from app.identity.domain.rbac import (
+    Role,
+    UserRoleAssignment,
+    role_assigned_event,
+    role_revoked_event,
+)
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 
@@ -89,6 +95,7 @@ class RoleService:
                     actor_user_id=actor_user_id, resource_type="role", resource_id=str(role.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
@@ -115,6 +122,7 @@ class RoleService:
                     actor_user_id=actor_user_id, resource_type="role", resource_id=str(role.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
@@ -164,6 +172,7 @@ class RoleService:
                     },
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
@@ -184,6 +193,7 @@ class RoleService:
                     actor_user_id=actor_user_id, resource_type="role", resource_id=str(role.id),
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -210,6 +220,7 @@ class RoleService:
                     metadata={"permission_id": str(permission_id)},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
@@ -236,6 +247,7 @@ class RoleService:
                     metadata={"permission_id": str(permission_id)},
                 )
             )
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=role.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _role_to_dto(role)
@@ -261,7 +273,10 @@ class RoleService:
 
             if await uow.user_role_assignments.get(user_id, role_id) is not None:
                 return
-            await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=user_id, role_id=role_id, org_id=org_id))
+            assignment = UserRoleAssignment.create(
+                user_id=user_id, role_id=role_id, org_id=org_id
+            )
+            await uow.user_role_assignments.add(assignment)
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org_id, category=AuditEventCategory.ROLE_CHANGE, action="role_assigned_to_user",
@@ -269,7 +284,12 @@ class RoleService:
                     metadata={"role_id": str(role_id)},
                 )
             )
+            event = role_assigned_event(user_id, role_id)
+            await append_domain_events_to_outbox(
+                uow.outbox, [event], org_id=assignment.org_id
+            )
             await uow.commit()
+            await self._dispatcher.dispatch(event)
 
     async def revoke_role_from_user(self, *, user_id: UserId, role_id: EntityId, org_id: OrgId, actor_user_id: UUID) -> None:
         async with self._uow_factory() as uow:
@@ -284,7 +304,12 @@ class RoleService:
                     metadata={"role_id": str(role_id)},
                 )
             )
+            event = role_revoked_event(user_id, role_id)
+            await append_domain_events_to_outbox(
+                uow.outbox, [event], org_id=assignment.org_id
+            )
             await uow.commit()
+            await self._dispatcher.dispatch(event)
 
     async def list_roles_for_org(self, *, org_id: OrgId) -> list[RoleDTO]:
         async with self._uow_factory() as uow:

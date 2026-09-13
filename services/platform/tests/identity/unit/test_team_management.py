@@ -7,6 +7,7 @@ from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
+from tests.identity.unit.fakes import FakeOutboxWriter
 
 
 class _Teams:
@@ -56,6 +57,7 @@ class _UnitOfWork:
         self.teams = _Teams(team)
         self.team_memberships = _Memberships(membership)
         self.users = _Users(user)
+        self.outbox = FakeOutboxWriter()
 
     async def __aenter__(self) -> "_UnitOfWork":
         return self
@@ -131,3 +133,34 @@ async def test_team_cannot_add_a_user_owned_by_another_org() -> None:
         )
 
     assert uow.team_memberships.membership == placeholder_membership
+
+
+@pytest.mark.asyncio
+async def test_same_tenant_team_membership_publishes_durable_events() -> None:
+    org_id = OrgId(new_uuid7())
+    team = Team.create(org_id=org_id, name="Support")
+    user = User.register(
+        org_id=org_id,
+        email=Email("support-member@example.com"),
+        password_hash="hash",
+        display_name="Support Member",
+    )
+    placeholder = TeamMembership.create(
+        team_id=team.id, user_id=UserId(new_uuid7())
+    )
+    uow = _UnitOfWork(team, placeholder, user)
+    service = TeamService(uow_factory=lambda: uow, dispatcher=EventDispatcher())
+
+    membership = await service.add_member(
+        org_id=org_id, team_id=team.id, user_id=UserId(user.id)
+    )
+    await service.remove_member(
+        org_id=org_id, team_id=team.id, user_id=UserId(user.id)
+    )
+
+    assert membership.user_id == user.id
+    assert [event.payload["event_type"] for event in uow.outbox.events] == [
+        "identity.team_member_added",
+        "identity.team_member_removed",
+    ]
+    assert {event.org_id for event in uow.outbox.events} == {org_id}

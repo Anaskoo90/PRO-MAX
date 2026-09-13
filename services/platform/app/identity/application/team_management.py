@@ -11,8 +11,10 @@ from app.identity.domain.exceptions import (
     TeamNotFoundError,
     UserNotFoundError,
 )
+from app.identity.domain.events import TeamMemberAdded, TeamMemberRemoved
 from app.identity.domain.team import Team, TeamMembership, TeamRole
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.platform_core.events.integration_event import append_domain_events_to_outbox
 from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 
 
@@ -55,6 +57,7 @@ class TeamService:
             team = Team.create(org_id=org_id, name=name, description=description, parent_team_id=parent_team_id)
             await uow.teams.add(team)
             events = team.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=team.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
@@ -67,6 +70,7 @@ class TeamService:
             team.update(name=name, description=description)
             await uow.teams.update(team)
             events = team.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=team.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
@@ -93,6 +97,7 @@ class TeamService:
             team.set_parent(parent_team_id)
             await uow.teams.update(team)
             events = team.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=team.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
             return _to_dto(team)
@@ -103,6 +108,7 @@ class TeamService:
             team.delete()
             await uow.teams.update(team)
             events = team.pull_domain_events()
+            await append_domain_events_to_outbox(uow.outbox, events, org_id=team.org_id)
             await uow.commit()
             await self._dispatcher.dispatch_all(events)
 
@@ -110,7 +116,7 @@ class TeamService:
         self, *, org_id: OrgId, team_id: EntityId, user_id: UserId, team_role: TeamRole = TeamRole.MEMBER
     ) -> TeamMembershipDTO:
         async with self._uow_factory() as uow:
-            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
+            team = await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             user = await uow.users.get_by_id(EntityId(user_id))
             if user is None or user.org_id != org_id:
                 raise UserNotFoundError(user_id)
@@ -119,7 +125,14 @@ class TeamService:
                 return _membership_to_dto(existing)
             membership = TeamMembership.create(team_id=team_id, user_id=user_id, team_role=team_role)
             await uow.team_memberships.add(membership)
+            event = TeamMemberAdded(
+                aggregate_id=team.id,
+                user_id=user_id,
+                team_role=team_role.value,
+            )
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=team.org_id)
             await uow.commit()
+            await self._dispatcher.dispatch(event)
             return _membership_to_dto(membership)
 
     async def update_member_role(
@@ -137,12 +150,15 @@ class TeamService:
 
     async def remove_member(self, *, org_id: OrgId, team_id: EntityId, user_id: UserId) -> None:
         async with self._uow_factory() as uow:
-            await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
+            team = await self._get_team_for_org(uow, team_id=team_id, org_id=org_id)
             membership = await uow.team_memberships.get(team_id, user_id)
             if membership is None:
                 raise TeamMembershipNotFoundError(team_id, user_id)
             await uow.team_memberships.delete(membership.id)
+            event = TeamMemberRemoved(aggregate_id=team.id, user_id=user_id)
+            await append_domain_events_to_outbox(uow.outbox, [event], org_id=team.org_id)
             await uow.commit()
+            await self._dispatcher.dispatch(event)
 
     async def list_members(self, *, team_id: EntityId) -> list[TeamMembershipDTO]:
         async with self._uow_factory() as uow:

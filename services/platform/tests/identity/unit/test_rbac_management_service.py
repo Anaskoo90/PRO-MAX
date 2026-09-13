@@ -37,6 +37,8 @@ async def test_assign_role_to_user_succeeds_for_a_same_org_user_and_custom_role(
 
     assignment = await uow.user_role_assignments.get(user.id, role.id)
     assert assignment is not None
+    assert uow.outbox.events[-1].payload["event_type"] == "identity.role_assigned_to_user"
+    assert uow.outbox.events[-1].org_id == org_id
 
 
 async def test_assign_role_to_user_allows_a_system_role() -> None:
@@ -119,6 +121,8 @@ async def test_revoke_role_from_user_removes_the_assignment() -> None:
     await service.revoke_role_from_user(user_id=user.id, role_id=role.id, org_id=org_id, actor_user_id=new_uuid7())
 
     assert await uow.user_role_assignments.get(user.id, role.id) is None
+    assert uow.outbox.events[-1].payload["event_type"] == "identity.role_revoked_from_user"
+    assert uow.outbox.events[-1].org_id == org_id
 
 
 async def test_revoke_role_from_user_is_a_no_op_for_an_assignment_from_another_org() -> None:
