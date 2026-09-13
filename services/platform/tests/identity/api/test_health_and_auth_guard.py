@@ -11,12 +11,21 @@ stack running.
 
 from __future__ import annotations
 
+import pytest
 from app.identity.presentation import deps
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.utils import new_uuid7
 from fastapi.testclient import TestClient
 
+from tests.api_session_stub import allow_active_test_sessions, issue_session_bound_test_token
+
 client = TestClient(app)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _active_test_sessions():
+    with allow_active_test_sessions(app):
+        yield
 
 
 def test_liveness_endpoint_reports_healthy() -> None:
@@ -57,8 +66,10 @@ def test_organization_and_team_reads_without_authorization_header_are_rejected()
 def test_org_a_cannot_read_org_b_organization_or_teams() -> None:
     org_a = new_uuid7()
     org_b = new_uuid7()
-    token = identity_module.token_service.issue_access_token(
-        user_id=new_uuid7(), org_id=org_a, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=new_uuid7(),
+        org_id=org_a,
     )
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -88,8 +99,10 @@ class _InvitationServiceSpy:
 
 
 def _invitation_test_headers(org_id) -> dict[str, str]:
-    token = identity_module.token_service.issue_access_token(
-        user_id=new_uuid7(), org_id=org_id, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=new_uuid7(),
+        org_id=org_id,
     )
     return {"Authorization": f"Bearer {token}"}
 
@@ -222,8 +235,10 @@ def test_revoke_trusted_device_is_scoped_to_the_authenticated_user() -> None:
     org_id = new_uuid7()
     user_id = new_uuid7()
     device_id = new_uuid7()
-    token = identity_module.token_service.issue_access_token(
-        user_id=user_id, org_id=org_id, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=user_id,
+        org_id=org_id,
     )
     service = _SecurityServiceSpy()
     app.dependency_overrides[deps.get_security_service] = lambda: service

@@ -10,12 +10,20 @@ tests/projects/integration, since they need the whole stack running.
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
+import pytest
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.utils import new_uuid7
+from fastapi.testclient import TestClient
+
+from tests.api_session_stub import allow_active_test_sessions, issue_session_bound_test_token
 
 client = TestClient(app)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _active_test_sessions():
+    with allow_active_test_sessions(app):
+        yield
 
 
 def test_create_workspace_without_authorization_header_is_rejected() -> None:
@@ -40,8 +48,10 @@ def test_workspace_and_template_reads_without_authorization_header_are_rejected(
 def test_org_a_cannot_list_org_b_workspaces_or_templates() -> None:
     org_a = new_uuid7()
     org_b = new_uuid7()
-    token = identity_module.token_service.issue_access_token(
-        user_id=new_uuid7(), org_id=org_a, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=new_uuid7(),
+        org_id=org_a,
     )
     headers = {"Authorization": f"Bearer {token}"}
 

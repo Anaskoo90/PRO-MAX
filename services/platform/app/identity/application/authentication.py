@@ -302,6 +302,27 @@ class AuthenticationService:
             await uow.commit()
             await self._dispatcher.dispatch(event)
 
+    async def is_access_session_active(
+        self,
+        *,
+        user_id: EntityId,
+        session_id: EntityId,
+    ) -> bool:
+        """Validate an access token's persisted session binding.
+
+        Access JWTs remain self-contained for their claims, but their ``sid``
+        is checked against the session aggregate so logout, password reset,
+        and explicit device revocation take effect immediately instead of
+        waiting for the access-token TTL to elapse.
+        """
+        async with self._uow_factory() as uow:
+            session = await uow.sessions.get_by_id(session_id)
+            return (
+                session is not None
+                and session.user_id == user_id
+                and session.is_active()
+            )
+
     async def list_sessions(self, *, user_id: EntityId, current_session_id: EntityId | None) -> list[SessionDTO]:
         async with self._uow_factory() as uow:
             sessions = await uow.sessions.list_active_for_user(user_id)

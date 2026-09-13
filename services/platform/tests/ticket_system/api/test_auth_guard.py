@@ -9,21 +9,32 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.dtos import PagedResult
 from app.platform_core.shared_kernel.utils import new_uuid7
 from app.ticket_system.presentation import deps
 from fastapi.testclient import TestClient
 
+from tests.api_session_stub import allow_active_test_sessions, issue_session_bound_test_token
+
 client = TestClient(app)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _active_test_sessions():
+    with allow_active_test_sessions(app):
+        yield
 
 _ORG_ID = "00000000-0000-7000-8000-000000000000"
 _TICKET_ID = "00000000-0000-7000-8000-000000000001"
 
 
 def _headers(org_id) -> dict[str, str]:
-    token = identity_module.token_service.issue_access_token(
-        user_id=new_uuid7(), org_id=org_id, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=new_uuid7(),
+        org_id=org_id,
     )
     return {"Authorization": f"Bearer {token}"}
 

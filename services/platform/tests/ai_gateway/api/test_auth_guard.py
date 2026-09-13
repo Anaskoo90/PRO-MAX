@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import pytest
 from app.ai_gateway.application.service import AiCompletionDTO
 from app.ai_gateway.presentation import deps
 from app.main import app, identity_module
 from app.platform_core.shared_kernel.utils import new_uuid7
 from fastapi.testclient import TestClient
+from tests.api_session_stub import allow_active_test_sessions, issue_session_bound_test_token
 
 client = TestClient(app)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _active_test_sessions():
+    with allow_active_test_sessions(app):
+        yield
 
 
 class _CompletionServiceSpy:
@@ -26,8 +34,10 @@ class _CompletionServiceSpy:
 
 
 def _headers(org_id):
-    token = identity_module.token_service.issue_access_token(
-        user_id=new_uuid7(), org_id=org_id, scopes=[]
+    token = issue_session_bound_test_token(
+        identity_module.token_service,
+        user_id=new_uuid7(),
+        org_id=org_id,
     )
     return {"Authorization": f"Bearer {token}"}
 

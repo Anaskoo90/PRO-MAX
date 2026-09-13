@@ -101,10 +101,18 @@ def get_audit_log_query_service() -> AuditLogQueryService:
 async def get_current_user_claims(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     token_service: JwtTokenService = Depends(get_token_service),
+    authentication_service: AuthenticationService = Depends(get_authentication_service),
 ) -> TokenClaims:
     if credentials is None or not credentials.credentials:
         raise UnauthorizedError("Missing or malformed Authorization header")
     try:
-        return token_service.verify(credentials.credentials)
+        claims = token_service.verify(credentials.credentials)
     except Exception as exc:
         raise UnauthorizedError("Invalid or expired access token") from exc
+
+    if claims.session_id is None or not await authentication_service.is_access_session_active(
+        user_id=claims.subject_user_id,
+        session_id=claims.session_id,
+    ):
+        raise UnauthorizedError("Invalid or expired access token")
+    return claims
