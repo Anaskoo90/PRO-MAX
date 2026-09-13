@@ -159,6 +159,20 @@ def test_ticket_message_body_cannot_be_only_whitespace() -> None:
     assert response.status_code == 422
 
 
+def test_ticket_attachment_routes_without_authorization_are_rejected() -> None:
+    base = f"/api/v1/organizations/{_ORG_ID}/tickets/{_TICKET_ID}/attachments"
+    attachment_id = "00000000-0000-7000-8000-000000000002"
+
+    responses = (
+        client.get(base),
+        client.post(base, files={"file": ("proof.txt", b"proof", "text/plain")}),
+        client.get(f"{base}/{attachment_id}/content"),
+        client.delete(f"{base}/{attachment_id}"),
+    )
+
+    assert [response.status_code for response in responses] == [401, 401, 401, 401]
+
+
 def test_ticket_message_list_enforces_path_tenant_before_calling_service() -> None:
     caller_org_id = new_uuid7()
     other_org_id = new_uuid7()
@@ -305,12 +319,21 @@ def test_ticket_message_bot_routes_without_bot_secret_are_rejected() -> None:
             "discord_message_id": "2",
         },
     )
+    attachment_response = client.post(
+        "/api/v1/discord/tickets/by-channel/2/attachments",
+        data={
+            "uploaded_by_discord_user_id": "1",
+            "discord_attachment_id": "2",
+        },
+        files={"file": ("proof.txt", b"proof", "text/plain")},
+    )
 
     assert (
         list_response.status_code,
         create_response.status_code,
         channel_create_response.status_code,
-    ) == (401, 401, 401)
+        attachment_response.status_code,
+    ) == (401, 401, 401, 401)
 
 
 def test_list_ticket_categories_via_bot_without_bot_secret_is_rejected() -> None:
@@ -342,9 +365,15 @@ def test_openapi_schema_includes_ticket_system_routes() -> None:
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/unclaim" in paths
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/transfer" in paths
     assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/messages" in paths
+    assert "/api/v1/organizations/{org_id}/tickets/{ticket_id}/attachments" in paths
+    assert (
+        "/api/v1/organizations/{org_id}/tickets/{ticket_id}/attachments/"
+        "{attachment_id}/content"
+    ) in paths
     assert "/api/v1/organizations/{org_id}/ticket-categories" in paths
     assert "/api/v1/discord/tickets" in paths
     assert "/api/v1/discord/tickets/by-channel/{discord_channel_id}" in paths
     assert "/api/v1/discord/tickets/{ticket_id}/messages" in paths
     assert "/api/v1/discord/tickets/by-channel/{discord_channel_id}/messages" in paths
+    assert "/api/v1/discord/tickets/by-channel/{discord_channel_id}/attachments" in paths
     assert "/api/v1/discord/guilds/{discord_guild_id}/ticket-categories" in paths

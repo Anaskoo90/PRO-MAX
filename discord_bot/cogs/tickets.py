@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 _PERMISSION_REQUIRED_MESSAGE = "You need the 'Manage Server' permission in this server to use this command."
 _logger = logging.getLogger("discord_bot.cogs.tickets")
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
 class TicketsCog(commands.Cog):
@@ -36,28 +37,69 @@ class TicketsCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        if (
-            message.guild is None
-            or message.author.bot
-            or not message.content.strip()
-        ):
+        if message.guild is None or message.author.bot:
             return
 
-        result = await self.bot.api_client.add_ticket_message_by_channel(
-            discord_channel_id=str(message.channel.id),
-            body=message.content,
-            author_discord_user_id=str(message.author.id),
-            discord_message_id=str(message.id),
-        )
-        if not result.ok and not result.not_a_ticket_channel:
-            _logger.warning(
-                "ticket_message_archive_failed",
-                extra={
-                    "discord_channel_id": str(message.channel.id),
-                    "discord_message_id": str(message.id),
-                    "reason": result.error_message,
-                },
+        is_ticket_channel = False
+        if message.content.strip():
+            result = await self.bot.api_client.add_ticket_message_by_channel(
+                discord_channel_id=str(message.channel.id),
+                body=message.content,
+                author_discord_user_id=str(message.author.id),
+                discord_message_id=str(message.id),
             )
+            if not result.ok and not result.not_a_ticket_channel:
+                _logger.warning(
+                    "ticket_message_archive_failed",
+                    extra={
+                        "discord_channel_id": str(message.channel.id),
+                        "discord_message_id": str(message.id),
+                        "reason": result.error_message,
+                    },
+                )
+            if not result.ok:
+                return
+            is_ticket_channel = True
+
+        if message.attachments and not is_ticket_channel:
+            ticket_result = await self.bot.api_client.get_ticket_by_channel(
+                discord_channel_id=str(message.channel.id)
+            )
+            if not ticket_result.ok:
+                return
+
+        for attachment in message.attachments:
+            if attachment.size <= 0 or attachment.size > _MAX_ATTACHMENT_BYTES:
+                _logger.warning(
+                    "ticket_attachment_size_rejected",
+                    extra={"discord_attachment_id": str(attachment.id)},
+                )
+                continue
+            try:
+                content = await attachment.read()
+            except discord.HTTPException:
+                _logger.warning(
+                    "ticket_attachment_download_failed",
+                    extra={"discord_attachment_id": str(attachment.id)},
+                    exc_info=True,
+                )
+                continue
+            result = await self.bot.api_client.upload_ticket_attachment_by_channel(
+                discord_channel_id=str(message.channel.id),
+                filename=attachment.filename,
+                content_type=attachment.content_type or "application/octet-stream",
+                content=content,
+                uploaded_by_discord_user_id=str(message.author.id),
+                discord_attachment_id=str(attachment.id),
+            )
+            if not result.ok and not result.not_a_ticket_channel:
+                _logger.warning(
+                    "ticket_attachment_archive_failed",
+                    extra={
+                        "discord_attachment_id": str(attachment.id),
+                        "reason": result.error_message,
+                    },
+                )
 
     @app_commands.command(
         name="ticket-category-create", description="Create a ticket category for this server's support panel"

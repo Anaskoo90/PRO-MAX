@@ -43,6 +43,13 @@ class TicketMessageResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TicketAttachmentResult:
+    ok: bool
+    not_a_ticket_channel: bool = False
+    error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TicketCategoryData:
     id: str
     name: str
@@ -355,6 +362,38 @@ class ApiClient:
                 error_message=self._error_message(response),
             )
         return TicketMessageResult(ok=True)
+
+    async def upload_ticket_attachment_by_channel(
+        self,
+        *,
+        discord_channel_id: str,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        uploaded_by_discord_user_id: str,
+        discord_attachment_id: str,
+    ) -> TicketAttachmentResult:
+        try:
+            response = await self._http.post(
+                f"/api/v1/discord/tickets/by-channel/{discord_channel_id}/attachments",
+                data={
+                    "uploaded_by_discord_user_id": uploaded_by_discord_user_id,
+                    "discord_attachment_id": discord_attachment_id,
+                },
+                files={"file": (filename, content, content_type)},
+                headers=self._bot_headers,
+            )
+        except httpx.HTTPError:
+            return TicketAttachmentResult(
+                ok=False, error_message="Could not reach the GuildDesk API"
+            )
+        if response.status_code >= 400:
+            return TicketAttachmentResult(
+                ok=False,
+                not_a_ticket_channel=response.status_code == 404,
+                error_message=self._error_message(response),
+            )
+        return TicketAttachmentResult(ok=True)
 
     async def aclose(self) -> None:
         await self._http.aclose()

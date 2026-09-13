@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.shared_kernel.types import EntityId, OrgId
-from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
+from app.ticket_system.domain.entities import (
+    Ticket,
+    TicketAttachment,
+    TicketCategory,
+    TicketMessage,
+)
 
 
 class FakeTicketRepository:
@@ -138,6 +143,43 @@ class FakeTicketMessageRepository:
         return message, True
 
 
+class FakeTicketAttachmentRepository:
+    def __init__(self) -> None:
+        self.attachments: dict[EntityId, TicketAttachment] = {}
+
+    async def get_by_id(
+        self, attachment_id: EntityId
+    ) -> TicketAttachment | None:
+        return self.attachments.get(attachment_id)
+
+    async def get_by_discord_attachment_id(
+        self, discord_attachment_id: str
+    ) -> TicketAttachment | None:
+        return next(
+            (
+                attachment
+                for attachment in self.attachments.values()
+                if attachment.discord_attachment_id == discord_attachment_id
+            ),
+            None,
+        )
+
+    async def list_for_ticket(
+        self, *, org_id: OrgId, ticket_id: EntityId
+    ) -> list[TicketAttachment]:
+        return [
+            attachment
+            for attachment in self.attachments.values()
+            if attachment.org_id == org_id and attachment.ticket_id == ticket_id
+        ]
+
+    async def add(self, attachment: TicketAttachment) -> None:
+        self.attachments[attachment.id] = attachment
+
+    async def delete(self, attachment_id: EntityId) -> None:
+        self.attachments.pop(attachment_id, None)
+
+
 class FakeTicketAuditLogRepository:
     def __init__(self) -> None:
         self.records: list = []
@@ -162,6 +204,7 @@ class FakeTicketUnitOfWork:
         self.tickets = FakeTicketRepository()
         self.ticket_categories = FakeTicketCategoryRepository()
         self.ticket_messages = FakeTicketMessageRepository()
+        self.ticket_attachments = FakeTicketAttachmentRepository()
         self.audit_logs = FakeTicketAuditLogRepository()
         self.outbox = FakeOutboxWriter()
 

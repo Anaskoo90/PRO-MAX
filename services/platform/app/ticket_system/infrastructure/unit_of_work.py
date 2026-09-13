@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ticket_system.infrastructure.outbox import SqlAlchemyOutboxWriter
 from app.ticket_system.infrastructure.repositories import (
+    SqlAlchemyTicketAttachmentRepository,
     SqlAlchemyTicketAuditLogRepository,
     SqlAlchemyTicketCategoryRepository,
     SqlAlchemyTicketMessageRepository,
@@ -23,6 +24,7 @@ class TicketUnitOfWork:
         self.ticket_categories: SqlAlchemyTicketCategoryRepository | None = None
         self.ticket_messages: SqlAlchemyTicketMessageRepository | None = None
         self.audit_logs: SqlAlchemyTicketAuditLogRepository | None = None
+        self.ticket_attachments: SqlAlchemyTicketAttachmentRepository | None = None
         self.outbox: SqlAlchemyOutboxWriter | None = None
 
     async def __aenter__(self) -> TicketUnitOfWork:
@@ -31,6 +33,7 @@ class TicketUnitOfWork:
         self.ticket_categories = SqlAlchemyTicketCategoryRepository(self.session)
         self.ticket_messages = SqlAlchemyTicketMessageRepository(self.session)
         self.audit_logs = SqlAlchemyTicketAuditLogRepository(self.session)
+        self.ticket_attachments = SqlAlchemyTicketAttachmentRepository(self.session)
         self.outbox = SqlAlchemyOutboxWriter(self.session, event_type="ticket_system.integration_event")
         return self
 

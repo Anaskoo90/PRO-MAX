@@ -108,6 +108,73 @@ class TicketMessage:
         )
 
 
+class TicketAttachment:
+    """Metadata for a private object stored by the configured file provider."""
+
+    def __init__(
+        self,
+        *,
+        id: EntityId,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        storage_key: str,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+        sha256: str,
+        uploaded_by_user_id: UserId | None = None,
+        uploaded_by_discord_user_id: str | None = None,
+        discord_attachment_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        if uploaded_by_user_id is None and uploaded_by_discord_user_id is None:
+            raise ValueError("TicketAttachment requires an uploader identity")
+        if len(sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in sha256
+        ):
+            raise ValueError("TicketAttachment requires a lowercase SHA-256 digest")
+        self.id = id
+        self.org_id = org_id
+        self.ticket_id = ticket_id
+        self.storage_key = storage_key
+        self.filename = filename
+        self.content_type = content_type
+        self.size_bytes = size_bytes
+        self.sha256 = sha256
+        self.uploaded_by_user_id = uploaded_by_user_id
+        self.uploaded_by_discord_user_id = uploaded_by_discord_user_id
+        self.discord_attachment_id = discord_attachment_id
+        self.created_at = created_at or utcnow()
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        org_id: OrgId,
+        ticket_id: EntityId,
+        storage_key: str,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+        sha256: str,
+        uploader: TicketActor,
+        discord_attachment_id: str | None = None,
+    ) -> TicketAttachment:
+        return cls(
+            id=EntityId(new_uuid7()),
+            org_id=org_id,
+            ticket_id=ticket_id,
+            storage_key=storage_key,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            uploaded_by_user_id=uploader.user_id,
+            uploaded_by_discord_user_id=uploader.discord_user_id,
+            discord_attachment_id=discord_attachment_id,
+        )
+
+
 class Ticket(EventRecordingMixin):
     def __init__(
         self,

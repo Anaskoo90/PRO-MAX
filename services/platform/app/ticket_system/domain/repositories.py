@@ -9,7 +9,12 @@ from typing import Protocol
 from app.platform_core.api.sorting import SortField
 from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
-from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
+from app.ticket_system.domain.entities import (
+    Ticket,
+    TicketAttachment,
+    TicketCategory,
+    TicketMessage,
+)
 
 
 class TicketRepository(Protocol):
@@ -61,6 +66,18 @@ class TicketMessageRepository(Protocol):
     async def add_idempotent(
         self, message: TicketMessage
     ) -> tuple[TicketMessage, bool]: ...
+
+
+class TicketAttachmentRepository(Protocol):
+    async def get_by_id(self, attachment_id: EntityId) -> TicketAttachment | None: ...
+    async def get_by_discord_attachment_id(
+        self, discord_attachment_id: str
+    ) -> TicketAttachment | None: ...
+    async def list_for_ticket(
+        self, *, org_id: OrgId, ticket_id: EntityId
+    ) -> list[TicketAttachment]: ...
+    async def add(self, attachment: TicketAttachment) -> None: ...
+    async def delete(self, attachment_id: EntityId) -> None: ...
 
 
 class TicketAuditLogRepository(Protocol):

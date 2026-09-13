@@ -147,6 +147,53 @@ class TicketMessageOrmModel(TicketSystemBase):
     )
 
 
+class TicketAttachmentOrmModel(TicketSystemBase):
+    __tablename__ = "ticket_attachments"
+    __table_args__ = (
+        UniqueConstraint(
+            "storage_key", name="uq_ticket_attachments_storage_key"
+        ),
+        UniqueConstraint(
+            "discord_attachment_id",
+            name="uq_ticket_attachments_discord_attachment_id",
+        ),
+        Index(
+            "ix_ticket_attachments_org_ticket_created_at",
+            "org_id",
+            "ticket_id",
+            "created_at",
+        ),
+        CheckConstraint("size_bytes > 0", name="ck_ticket_attachments_size"),
+        CheckConstraint(
+            "char_length(sha256) = 64", name="ck_ticket_attachments_sha256"
+        ),
+        {"schema": "ticket_system"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("ticket_system.tickets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    storage_key: Mapped[str] = mapped_column(String(length=500), nullable=False)
+    filename: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(length=100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    uploaded_by_discord_user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    discord_attachment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=text("now()")
+    )
+
+
 class TicketAuditLogOrmModel(TicketSystemBase):
     """Append-only — no deleted_at, no update/delete in the repository."""
 

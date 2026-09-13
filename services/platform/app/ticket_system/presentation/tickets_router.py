@@ -4,9 +4,11 @@ Discord-facing equivalents these share an application service with."""
 
 from __future__ import annotations
 
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, File, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.platform_core.api.pagination import PageParams, page_params
 from app.platform_core.api.responses import DataResponse, PagedResponse
@@ -16,6 +18,8 @@ from app.platform_core.errors.api_exceptions import ForbiddenError
 from app.platform_core.errors.domain_exceptions import BusinessRuleViolationError
 from app.platform_core.security.token import TokenClaims
 from app.platform_core.shared_kernel.dtos import PagedResult
+from app.platform_core.storage.upload_contracts import MAX_UPLOAD_BYTES
+from app.ticket_system.application.ticket_attachments import TicketAttachmentService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
 from app.ticket_system.application.ticket_messages import TicketMessageService
 from app.ticket_system.domain.value_objects import TicketActor
@@ -25,6 +29,7 @@ from app.ticket_system.presentation.schemas import (
     CloseTicketRequest,
     CreateTicketMessageRequest,
     CreateTicketRequest,
+    TicketAttachmentResponse,
     TicketListItemResponse,
     TicketMessageResponse,
     TicketResponse,
@@ -69,6 +74,22 @@ def _to_message_response(dto) -> TicketMessageResponse:
         author_user_id=dto.author_user_id,
         discord_message_id=dto.discord_message_id,
         is_internal=dto.is_internal,
+        created_at=dto.created_at,
+    )
+
+
+def _to_attachment_response(dto) -> TicketAttachmentResponse:
+    return TicketAttachmentResponse(
+        id=dto.id,
+        org_id=dto.org_id,
+        ticket_id=dto.ticket_id,
+        filename=dto.filename,
+        content_type=dto.content_type,
+        size_bytes=dto.size_bytes,
+        sha256=dto.sha256,
+        uploaded_by_user_id=dto.uploaded_by_user_id,
+        uploaded_by_discord_user_id=dto.uploaded_by_discord_user_id,
+        discord_attachment_id=dto.discord_attachment_id,
         created_at=dto.created_at,
     )
 
@@ -196,6 +217,102 @@ async def add_ticket_message(
         is_internal=request.is_internal,
     )
     return DataResponse(data=_to_message_response(message))
+
+
+@router.get(
+    "/organizations/{org_id}/tickets/{ticket_id}/attachments",
+    response_model=DataResponse[list[TicketAttachmentResponse]],
+)
+async def list_ticket_attachments(
+    org_id: str,
+    ticket_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketAttachmentService = Depends(deps.get_ticket_attachment_service),
+) -> DataResponse[list[TicketAttachmentResponse]]:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    attachments = await service.list_for_ticket(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+    )
+    return DataResponse(
+        data=[_to_attachment_response(attachment) for attachment in attachments]
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/tickets/{ticket_id}/attachments",
+    response_model=DataResponse[TicketAttachmentResponse],
+    status_code=201,
+)
+async def upload_ticket_attachment(
+    org_id: str,
+    ticket_id: str,
+    file: UploadFile = File(...),
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketAttachmentService = Depends(deps.get_ticket_attachment_service),
+) -> DataResponse[TicketAttachmentResponse]:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    attachment = await service.upload(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+        filename=file.filename or "upload",
+        content_type=file.content_type or "application/octet-stream",
+        content=content,
+    )
+    return DataResponse(data=_to_attachment_response(attachment))
+
+
+@router.get(
+    "/organizations/{org_id}/tickets/{ticket_id}/attachments/{attachment_id}/content",
+    response_class=StreamingResponse,
+)
+async def download_ticket_attachment(
+    org_id: str,
+    ticket_id: str,
+    attachment_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketAttachmentService = Depends(deps.get_ticket_attachment_service),
+) -> StreamingResponse:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    attachment = await service.get_content(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+        attachment_id=UUID(attachment_id),
+    )
+    return StreamingResponse(
+        attachment.chunks,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Length": str(attachment.size_bytes),
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(attachment.filename)
+            ),
+        },
+    )
+
+
+@router.delete(
+    "/organizations/{org_id}/tickets/{ticket_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_ticket_attachment(
+    org_id: str,
+    ticket_id: str,
+    attachment_id: str,
+    claims: TokenClaims = Depends(deps.get_current_user_claims),
+    service: TicketAttachmentService = Depends(deps.get_ticket_attachment_service),
+) -> None:
+    parsed_org_id = _assert_path_matches_claims_org(org_id, claims)
+    await service.delete(
+        org_id=parsed_org_id,
+        actor_user_id=claims.subject_user_id,
+        ticket_id=UUID(ticket_id),
+        attachment_id=UUID(attachment_id),
+    )
 
 
 @router.post(

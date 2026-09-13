@@ -19,6 +19,7 @@ from uuid import UUID
 
 from app.platform_core.events.publisher import OutboxWriter
 from app.ticket_system.domain.repositories import (
+    TicketAttachmentRepository,
     TicketAuditLogRepository,
     TicketCategoryRepository,
     TicketMessageRepository,
@@ -30,6 +31,7 @@ class TicketUnitOfWorkPort(Protocol):
     tickets: TicketRepository
     ticket_categories: TicketCategoryRepository
     ticket_messages: TicketMessageRepository
+    ticket_attachments: TicketAttachmentRepository
     audit_logs: TicketAuditLogRepository
     outbox: OutboxWriter
 

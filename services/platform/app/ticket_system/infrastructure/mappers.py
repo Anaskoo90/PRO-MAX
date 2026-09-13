@@ -6,11 +6,13 @@ from app.platform_core.shared_kernel.types import EntityId, OrgId, UserId
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
 from app.ticket_system.domain.entities import (
     Ticket,
+    TicketAttachment,
     TicketCategory,
     TicketMessage,
     TicketStatus,
 )
 from app.ticket_system.infrastructure.orm_models import (
+    TicketAttachmentOrmModel,
     TicketAuditLogOrmModel,
     TicketCategoryOrmModel,
     TicketMessageOrmModel,
@@ -108,6 +110,44 @@ def ticket_message_to_orm(entity: TicketMessage) -> TicketMessageOrmModel:
         author_user_id=entity.author_user_id,
         discord_message_id=entity.discord_message_id,
         is_internal=entity.is_internal,
+        created_at=entity.created_at,
+    )
+
+
+def ticket_attachment_to_domain(row: TicketAttachmentOrmModel) -> TicketAttachment:
+    return TicketAttachment(
+        id=EntityId(row.id),
+        org_id=OrgId(row.org_id),
+        ticket_id=EntityId(row.ticket_id),
+        storage_key=row.storage_key,
+        filename=row.filename,
+        content_type=row.content_type,
+        size_bytes=row.size_bytes,
+        sha256=row.sha256,
+        uploaded_by_user_id=(
+            UserId(row.uploaded_by_user_id) if row.uploaded_by_user_id else None
+        ),
+        uploaded_by_discord_user_id=row.uploaded_by_discord_user_id,
+        discord_attachment_id=row.discord_attachment_id,
+        created_at=row.created_at,
+    )
+
+
+def ticket_attachment_to_orm(
+    entity: TicketAttachment,
+) -> TicketAttachmentOrmModel:
+    return TicketAttachmentOrmModel(
+        id=entity.id,
+        org_id=entity.org_id,
+        ticket_id=entity.ticket_id,
+        storage_key=entity.storage_key,
+        filename=entity.filename,
+        content_type=entity.content_type,
+        size_bytes=entity.size_bytes,
+        sha256=entity.sha256,
+        uploaded_by_user_id=entity.uploaded_by_user_id,
+        uploaded_by_discord_user_id=entity.uploaded_by_discord_user_id,
+        discord_attachment_id=entity.discord_attachment_id,
         created_at=entity.created_at,
     )
 

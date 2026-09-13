@@ -25,6 +25,7 @@ from app.discord_integration.presentation.bot_authentication import (
 from app.identity.presentation.deps import (
     get_current_user_claims,  # noqa: F401  (re-exported for routers)
 )
+from app.ticket_system.application.ticket_attachments import TicketAttachmentService
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
 from app.ticket_system.application.ticket_messages import TicketMessageService
@@ -40,3 +41,7 @@ def get_ticket_category_service() -> TicketCategoryService:
 
 def get_ticket_message_service() -> TicketMessageService:
     raise NotImplementedError("TicketMessageService dependency not wired")
+
+
+def get_ticket_attachment_service() -> TicketAttachmentService:
+    raise NotImplementedError("TicketAttachmentService dependency not wired")

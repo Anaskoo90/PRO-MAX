@@ -198,3 +198,24 @@ async def test_non_ticket_channel_is_identified_without_raising() -> None:
 
     assert result.ok is False
     assert result.not_a_ticket_channel is True
+
+
+async def test_upload_ticket_attachment_uses_multipart_and_bot_secret() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/discord/tickets/by-channel/222/attachments"
+        assert request.headers["X-GuildDesk-Bot-Secret"] == "the-secret"
+        assert b'filename="proof.txt"' in request.content
+        assert b"attachment-1" in request.content
+        assert b"proof" in request.content
+        return httpx.Response(201, json={"data": {"id": "attachment"}})
+
+    result = await _client(handler).upload_ticket_attachment_by_channel(
+        discord_channel_id="222",
+        filename="proof.txt",
+        content_type="text/plain",
+        content=b"proof",
+        uploaded_by_discord_user_id="333",
+        discord_attachment_id="attachment-1",
+    )
+
+    assert result.ok is True

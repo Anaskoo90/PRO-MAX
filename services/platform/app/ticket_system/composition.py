@@ -28,6 +28,7 @@ from app.identity.composition import IdentityModule
 from app.platform_core.configuration.settings import PlatformSettings
 from app.platform_core.di.container import ServiceContainer
 from app.platform_core.events.dispatcher import EventDispatcher
+from app.ticket_system.application.ticket_attachments import TicketAttachmentService
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
 from app.ticket_system.application.ticket_messages import TicketMessageService
@@ -85,11 +86,20 @@ class TicketSystemModule:
             permission_checker=permission_checker,
             guild_resolver=guild_resolver,
         )
+        self.ticket_attachment_service = TicketAttachmentService(
+            uow_factory=uow_factory,
+            permission_checker=permission_checker,
+            guild_resolver=guild_resolver,
+            file_storage=identity_module.file_storage,
+        )
 
     def register(self, container: ServiceContainer) -> None:
         container.register_instance(TicketLifecycleService, self.ticket_lifecycle_service)
         container.register_instance(TicketCategoryService, self.ticket_category_service)
         container.register_instance(TicketMessageService, self.ticket_message_service)
+        container.register_instance(
+            TicketAttachmentService, self.ticket_attachment_service
+        )
 
     def mount(self, app: FastAPI) -> None:
         app.include_router(tickets_router.router)
@@ -99,6 +109,7 @@ class TicketSystemModule:
         app.dependency_overrides[deps.get_ticket_lifecycle_service] = lambda: self.ticket_lifecycle_service
         app.dependency_overrides[deps.get_ticket_category_service] = lambda: self.ticket_category_service
         app.dependency_overrides[deps.get_ticket_message_service] = lambda: self.ticket_message_service
+        app.dependency_overrides[deps.get_ticket_attachment_service] = lambda: self.ticket_attachment_service
 
 
 __all__ = ["TicketSystemModule", "TICKET_PERMISSION_CATALOG"]

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, File, Form, UploadFile
 
 from app.platform_core.api.pagination import PageParams, page_params
 from app.platform_core.api.responses import DataResponse, PagedResponse
 from app.platform_core.api.versioning import versioned_router
 from app.platform_core.shared_kernel.dtos import PagedResult
+from app.platform_core.storage.upload_contracts import MAX_UPLOAD_BYTES
+from app.ticket_system.application.ticket_attachments import TicketAttachmentService
 from app.ticket_system.application.ticket_categories import TicketCategoryService
 from app.ticket_system.application.ticket_lifecycle import TicketLifecycleService
 from app.ticket_system.application.ticket_messages import TicketMessageService
@@ -25,6 +27,7 @@ from app.ticket_system.presentation.schemas import (
     CreateTicketCategoryRequest,
     CreateTicketMessageViaBotRequest,
     CreateTicketViaBotRequest,
+    TicketAttachmentResponse,
     TicketCategoryResponse,
     TicketMessageResponse,
     TicketResponse,
@@ -63,6 +66,22 @@ def _to_message_response(dto) -> TicketMessageResponse:
         author_user_id=dto.author_user_id,
         discord_message_id=dto.discord_message_id,
         is_internal=dto.is_internal,
+        created_at=dto.created_at,
+    )
+
+
+def _to_attachment_response(dto) -> TicketAttachmentResponse:
+    return TicketAttachmentResponse(
+        id=dto.id,
+        org_id=dto.org_id,
+        ticket_id=dto.ticket_id,
+        filename=dto.filename,
+        content_type=dto.content_type,
+        size_bytes=dto.size_bytes,
+        sha256=dto.sha256,
+        uploaded_by_user_id=dto.uploaded_by_user_id,
+        uploaded_by_discord_user_id=dto.uploaded_by_discord_user_id,
+        discord_attachment_id=dto.discord_attachment_id,
         created_at=dto.created_at,
     )
 
@@ -162,6 +181,31 @@ async def add_ticket_message_by_channel_via_bot(
         is_internal=request.is_internal,
     )
     return DataResponse(data=_to_message_response(message))
+
+
+@router.post(
+    "/discord/tickets/by-channel/{discord_channel_id}/attachments",
+    response_model=DataResponse[TicketAttachmentResponse],
+    status_code=201,
+    dependencies=[Depends(deps.require_bot_service_secret)],
+)
+async def upload_ticket_attachment_by_channel_via_bot(
+    discord_channel_id: str,
+    file: UploadFile = File(...),
+    uploaded_by_discord_user_id: str = Form(...),
+    discord_attachment_id: str = Form(...),
+    service: TicketAttachmentService = Depends(deps.get_ticket_attachment_service),
+) -> DataResponse[TicketAttachmentResponse]:
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    attachment = await service.upload_from_bot(
+        discord_channel_id=discord_channel_id,
+        filename=file.filename or "upload",
+        content_type=file.content_type or "application/octet-stream",
+        content=content,
+        uploaded_by_discord_user_id=uploaded_by_discord_user_id,
+        discord_attachment_id=discord_attachment_id,
+    )
+    return DataResponse(data=_to_attachment_response(attachment))
 
 
 @router.post(

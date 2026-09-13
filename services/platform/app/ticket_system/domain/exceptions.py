@@ -56,3 +56,21 @@ class DiscordMessageConflictError(BusinessRuleViolationError):
             "discord_message_conflict",
             f"Discord message '{discord_message_id}' is already attached to another ticket",
         )
+
+
+class TicketAttachmentNotFoundError(EntityNotFoundError):
+    def __init__(self, attachment_id: object) -> None:
+        super().__init__("TicketAttachment", attachment_id)
+
+
+class InvalidTicketAttachmentError(BusinessRuleViolationError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("invalid_ticket_attachment", reason)
+
+
+class ClosedTicketAttachmentError(BusinessRuleViolationError):
+    def __init__(self) -> None:
+        super().__init__(
+            "closed_ticket_attachment",
+            "Attachments cannot be added to a closed ticket",
+        )

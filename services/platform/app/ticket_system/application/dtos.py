@@ -48,3 +48,18 @@ class TicketMessageDTO:
     discord_message_id: str | None
     is_internal: bool
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TicketAttachmentDTO:
+    id: UUID
+    org_id: UUID
+    ticket_id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    uploaded_by_user_id: UUID | None
+    uploaded_by_discord_user_id: str | None
+    discord_attachment_id: str | None
+    created_at: datetime

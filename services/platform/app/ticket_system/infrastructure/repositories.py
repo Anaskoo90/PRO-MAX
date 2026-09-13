@@ -10,9 +10,15 @@ from app.platform_core.api.sorting import SortField
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.shared_kernel.types import EntityId, OrgId
 from app.ticket_system.domain.audit import TicketAuditEventCategory, TicketAuditLogRecord
-from app.ticket_system.domain.entities import Ticket, TicketCategory, TicketMessage
+from app.ticket_system.domain.entities import (
+    Ticket,
+    TicketAttachment,
+    TicketCategory,
+    TicketMessage,
+)
 from app.ticket_system.infrastructure import mappers
 from app.ticket_system.infrastructure.orm_models import (
+    TicketAttachmentOrmModel,
     TicketAuditLogOrmModel,
     TicketCategoryOrmModel,
     TicketMessageOrmModel,
@@ -246,6 +252,51 @@ class SqlAlchemyTicketMessageRepository:
         if existing is None:  # Defensive: ON CONFLICT guarantees the row exists.
             raise RuntimeError("Conflicting Discord message could not be loaded")
         return existing, False
+
+
+class SqlAlchemyTicketAttachmentRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_id(
+        self, attachment_id: EntityId
+    ) -> TicketAttachment | None:
+        row = await self._session.get(TicketAttachmentOrmModel, attachment_id)
+        return mappers.ticket_attachment_to_domain(row) if row else None
+
+    async def get_by_discord_attachment_id(
+        self, discord_attachment_id: str
+    ) -> TicketAttachment | None:
+        stmt = select(TicketAttachmentOrmModel).where(
+            TicketAttachmentOrmModel.discord_attachment_id == discord_attachment_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return mappers.ticket_attachment_to_domain(row) if row else None
+
+    async def list_for_ticket(
+        self, *, org_id: OrgId, ticket_id: EntityId
+    ) -> list[TicketAttachment]:
+        stmt = (
+            select(TicketAttachmentOrmModel)
+            .where(
+                TicketAttachmentOrmModel.org_id == org_id,
+                TicketAttachmentOrmModel.ticket_id == ticket_id,
+            )
+            .order_by(
+                TicketAttachmentOrmModel.created_at.asc(),
+                TicketAttachmentOrmModel.id.asc(),
+            )
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [mappers.ticket_attachment_to_domain(row) for row in rows]
+
+    async def add(self, attachment: TicketAttachment) -> None:
+        self._session.add(mappers.ticket_attachment_to_orm(attachment))
+
+    async def delete(self, attachment_id: EntityId) -> None:
+        row = await self._session.get(TicketAttachmentOrmModel, attachment_id)
+        if row is not None:
+            await self._session.delete(row)
 
 
 class SqlAlchemyTicketAuditLogRepository:
