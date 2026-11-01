@@ -1,11 +1,17 @@
 import pytest
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.domain.entities import User
-from app.identity.domain.exceptions import RoleNotFoundError, UserNotFoundError
-from app.identity.domain.rbac import Permission, Role
+from app.identity.domain.exceptions import (
+    InsufficientAuthorityError,
+    OrganizationOwnerProtectedError,
+    RoleNotFoundError,
+    UserNotFoundError,
+)
+from app.identity.domain.organization import Organization
+from app.identity.domain.rbac import Permission, Role, UserRoleAssignment
 from app.identity.domain.value_objects import Email
 from app.platform_core.events.dispatcher import EventDispatcher
-from app.platform_core.shared_kernel.types import OrgId
+from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
 
 from tests.identity.unit.fakes import FakeUnitOfWork
@@ -288,3 +294,254 @@ async def test_same_tenant_role_mutation_still_succeeds_and_is_audited() -> None
     assert uow.audit_logs.records[-1].org_id == org_id
     assert uow.audit_logs.records[-1].actor_user_id == actor_user_id
     assert uow.audit_logs.records[-1].action == "role_parent_updated"
+
+
+# --- H2 regression: authority limits and owner protection -----------------
+
+
+async def _permission(uow: FakeUnitOfWork, resource: str, action: str) -> Permission:
+    permission = Permission.create(resource=resource, action=action, description=f"{resource}:{action}")
+    await uow.permissions.add(permission)
+    return permission
+
+
+async def _actor_holding(uow: FakeUnitOfWork, org_id: OrgId, *permissions: Permission, name: str = "actor-role") -> User:
+    """A same-org user whose only authority is a custom role carrying exactly
+    `permissions`."""
+    actor = _make_member(org_id, email=f"actor-{new_uuid7()}@example.com")
+    role = Role.create_custom_role(org_id=org_id, name=f"{name}-{new_uuid7()}")
+    for permission in permissions:
+        role.grant_permission(permission.id)
+    await uow.users.add(actor)
+    await uow.roles.add(role)
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=actor.id, role_id=role.id, org_id=org_id))
+    return actor
+
+
+async def test_assign_role_rejects_a_role_with_permissions_the_actor_lacks() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, write = await _permission(uow, "project", "read"), await _permission(uow, "project", "write")
+    actor = await _actor_holding(uow, org_id, read)
+    target = _make_member(org_id, email="target@example.com")
+    stronger = Role.create_custom_role(org_id=org_id, name="stronger")
+    stronger.grant_permission(read.id)
+    stronger.grant_permission(write.id)
+    await uow.users.add(target)
+    await uow.roles.add(stronger)
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).assign_role_to_user(
+            user_id=target.id, role_id=stronger.id, org_id=org_id, actor_user_id=actor.id
+        )
+
+    assert await uow.user_role_assignments.get(target.id, stronger.id) is None
+
+
+async def test_assign_role_allows_a_role_within_the_actors_own_permissions() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, write = await _permission(uow, "project", "read"), await _permission(uow, "project", "write")
+    actor = await _actor_holding(uow, org_id, read, write)
+    target = _make_member(org_id, email="target@example.com")
+    narrower = Role.create_custom_role(org_id=org_id, name="narrower")
+    narrower.grant_permission(read.id)
+    await uow.users.add(target)
+    await uow.roles.add(narrower)
+
+    await _make_service(uow).assign_role_to_user(
+        user_id=target.id, role_id=narrower.id, org_id=org_id, actor_user_id=actor.id
+    )
+
+    assert await uow.user_role_assignments.get(target.id, narrower.id) is not None
+
+
+async def test_assign_role_counts_permissions_inherited_from_a_parent_role() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, secret = await _permission(uow, "project", "read"), await _permission(uow, "billing", "manage")
+    actor = await _actor_holding(uow, org_id, read)
+    target = _make_member(org_id, email="target@example.com")
+    parent = Role.create_custom_role(org_id=org_id, name="parent")
+    parent.grant_permission(secret.id)
+    child = Role.create_custom_role(org_id=org_id, name="child")  # no direct permissions
+    child.set_parent(parent.id)
+    await uow.users.add(target)
+    await uow.roles.add(parent)
+    await uow.roles.add(child)
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).assign_role_to_user(
+            user_id=target.id, role_id=child.id, org_id=org_id, actor_user_id=actor.id
+        )
+
+
+async def test_org_admin_style_actor_cannot_assign_org_owner_to_themselves() -> None:
+    """The audited escalation: org_admin holds role:assign but not
+    organization:manage_ownership, and org_owner carries the latter."""
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    role_assign = await _permission(uow, "role", "assign")
+    manage_ownership = await _permission(uow, "organization", "manage_ownership")
+    admin = await _actor_holding(uow, org_id, role_assign, name="org_admin")
+    owner_role = Role.create_system_role(name="org_owner", description="Owner")
+    owner_role.permission_ids |= {role_assign.id, manage_ownership.id}  # system roles are seeded, not granted
+    await uow.roles.add(owner_role)
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).assign_role_to_user(
+            user_id=admin.id, role_id=owner_role.id, org_id=org_id, actor_user_id=admin.id
+        )
+
+    assert await uow.user_role_assignments.get(admin.id, owner_role.id) is None
+
+
+async def test_an_owner_can_assign_the_owner_role() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    role_assign = await _permission(uow, "role", "assign")
+    manage_ownership = await _permission(uow, "organization", "manage_ownership")
+    owner = await _actor_holding(uow, org_id, role_assign, manage_ownership, name="owner-like")
+    target = _make_member(org_id, email="target@example.com")
+    owner_role = Role.create_system_role(name="org_owner", description="Owner")
+    owner_role.permission_ids |= {role_assign.id, manage_ownership.id}  # system roles are seeded, not granted
+    await uow.users.add(target)
+    await uow.roles.add(owner_role)
+
+    await _make_service(uow).assign_role_to_user(
+        user_id=target.id, role_id=owner_role.id, org_id=org_id, actor_user_id=owner.id
+    )
+
+    assert await uow.user_role_assignments.get(target.id, owner_role.id) is not None
+
+
+async def test_grant_permission_rejects_a_permission_the_actor_does_not_hold() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, secret = await _permission(uow, "project", "read"), await _permission(uow, "billing", "manage")
+    actor = await _actor_holding(uow, org_id, read)
+    role = Role.create_custom_role(org_id=org_id, name="custom")
+    await uow.roles.add(role)
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).grant_permission(
+            org_id=org_id, role_id=role.id, permission_id=secret.id, actor_user_id=actor.id
+        )
+
+    assert secret.id not in role.permission_ids
+
+
+async def test_grant_permission_allows_a_permission_the_actor_holds() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read = await _permission(uow, "project", "read")
+    actor = await _actor_holding(uow, org_id, read)
+    role = Role.create_custom_role(org_id=org_id, name="custom")
+    await uow.roles.add(role)
+
+    await _make_service(uow).grant_permission(
+        org_id=org_id, role_id=role.id, permission_id=read.id, actor_user_id=actor.id
+    )
+
+    assert read.id in role.permission_ids
+
+
+async def test_set_parent_rejects_a_parent_whose_permissions_exceed_the_actors() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, secret = await _permission(uow, "project", "read"), await _permission(uow, "billing", "manage")
+    actor = await _actor_holding(uow, org_id, read)
+    powerful = Role.create_custom_role(org_id=org_id, name="powerful")
+    powerful.grant_permission(secret.id)
+    weak = Role.create_custom_role(org_id=org_id, name="weak")
+    await uow.roles.add(powerful)
+    await uow.roles.add(weak)
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).set_parent(
+            org_id=org_id, role_id=weak.id, parent_role_id=powerful.id, actor_user_id=actor.id
+        )
+
+    assert weak.parent_role_id is None
+
+
+async def test_set_parent_allows_a_parent_within_the_actors_permissions() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read = await _permission(uow, "project", "read")
+    actor = await _actor_holding(uow, org_id, read)
+    parent = Role.create_custom_role(org_id=org_id, name="parent")
+    parent.grant_permission(read.id)
+    child = Role.create_custom_role(org_id=org_id, name="child")
+    await uow.roles.add(parent)
+    await uow.roles.add(child)
+
+    await _make_service(uow).set_parent(
+        org_id=org_id, role_id=child.id, parent_role_id=parent.id, actor_user_id=actor.id
+    )
+
+    assert child.parent_role_id == parent.id
+
+
+async def _org_with_owner(uow: FakeUnitOfWork) -> tuple[OrgId, User, Role]:
+    """An org whose designated owner holds the seeded-style org_owner role."""
+    org_id = OrgId(new_uuid7())
+    owner = _make_member(org_id, email="owner@example.com")
+    org = Organization.create(name="Acme", slug=f"acme-{new_uuid7().hex[:8]}", owner_user_id=UserId(owner.id))
+    org.id = org_id
+    owner_role = Role.create_system_role(name="org_owner", description="Owner")
+    await uow.organizations.add(org)
+    await uow.users.add(owner)
+    await uow.roles.add(owner_role)
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=org_id))
+    return org_id, owner, owner_role
+
+
+async def test_the_designated_owner_cannot_be_stripped_of_the_owner_role() -> None:
+    uow = FakeUnitOfWork()
+    org_id, owner, owner_role = await _org_with_owner(uow)
+    admin = await _actor_holding(uow, org_id)  # no permissions needed: owner role carries none here
+
+    for actor_id in (admin.id, owner.id):  # neither a peer nor the owner themselves
+        with pytest.raises(OrganizationOwnerProtectedError):
+            await _make_service(uow).revoke_role_from_user(
+                user_id=owner.id, role_id=owner_role.id, org_id=org_id, actor_user_id=actor_id
+            )
+
+    assert await uow.user_role_assignments.get(owner.id, owner_role.id) is not None
+
+
+async def test_the_owner_role_can_be_revoked_after_ownership_is_transferred() -> None:
+    uow = FakeUnitOfWork()
+    org_id, former_owner, owner_role = await _org_with_owner(uow)
+    successor = _make_member(org_id, email="successor@example.com")
+    await uow.users.add(successor)
+    org = await uow.organizations.get_by_id(org_id)
+    org.transfer_ownership(UserId(successor.id))  # the dedicated flow
+    await uow.organizations.update(org)
+
+    await _make_service(uow).revoke_role_from_user(
+        user_id=former_owner.id, role_id=owner_role.id, org_id=org_id, actor_user_id=successor.id
+    )
+
+    assert await uow.user_role_assignments.get(former_owner.id, owner_role.id) is None
+
+
+async def test_revoking_a_role_requires_the_authority_to_have_assigned_it() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    read, secret = await _permission(uow, "project", "read"), await _permission(uow, "billing", "manage")
+    weak_actor = await _actor_holding(uow, org_id, read)
+    victim = _make_member(org_id, email="victim@example.com")
+    strong = Role.create_custom_role(org_id=org_id, name="strong")
+    strong.grant_permission(secret.id)
+    await uow.users.add(victim)
+    await uow.roles.add(strong)
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=victim.id, role_id=strong.id, org_id=org_id))
+
+    with pytest.raises(InsufficientAuthorityError):
+        await _make_service(uow).revoke_role_from_user(
+            user_id=victim.id, role_id=strong.id, org_id=org_id, actor_user_id=weak_actor.id
+        )
+
+    assert await uow.user_role_assignments.get(victim.id, strong.id) is not None

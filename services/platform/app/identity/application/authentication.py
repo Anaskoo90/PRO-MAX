@@ -21,7 +21,7 @@ import jwt
 from app.identity.application.dtos import AuthTokens, LoginResult, SessionDTO
 from app.identity.application.ports import IdentityUnitOfWorkPort, OAuth2ClientPort
 from app.identity.application.security import SecurityService
-from app.identity.domain.entities import Session, User
+from app.identity.domain.entities import Session, User, UserStatus
 from app.identity.domain.events import (
     SessionRevoked,
     SuspiciousLoginDetected,
@@ -271,6 +271,9 @@ class AuthenticationService:
             user = await uow.users.get_by_id(session.user_id)
             if user is None:
                 raise UserNotFoundError(session.user_id)
+            # A suspended/deactivated account must not be able to mint new
+            # tokens from a refresh token that predates the status change.
+            user.assert_can_authenticate()
 
             # Refresh-token rotation: the old token is revoked, a new one issued —
             # limits the blast radius of a leaked refresh token to a single use.
@@ -313,15 +316,20 @@ class AuthenticationService:
         Access JWTs remain self-contained for their claims, but their ``sid``
         is checked against the session aggregate so logout, password reset,
         and explicit device revocation take effect immediately instead of
-        waiting for the access-token TTL to elapse.
+        waiting for the access-token TTL to elapse. The owning account must
+        also still be active, so a suspended/deactivated user is rejected even
+        if one of their sessions was somehow left unrevoked.
         """
         async with self._uow_factory() as uow:
             session = await uow.sessions.get_by_id(session_id)
-            return (
-                session is not None
-                and session.user_id == user_id
-                and session.is_active()
-            )
+            if (
+                session is None
+                or session.user_id != user_id
+                or not session.is_active()
+            ):
+                return False
+            user = await uow.users.get_by_id(user_id)
+            return user is not None and user.status == UserStatus.ACTIVE
 
     async def list_sessions(self, *, user_id: EntityId, current_session_id: EntityId | None) -> list[SessionDTO]:
         async with self._uow_factory() as uow:

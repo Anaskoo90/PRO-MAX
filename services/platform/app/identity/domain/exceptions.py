@@ -212,6 +212,32 @@ class InsufficientPermissionError(BusinessRuleViolationError):
         self.action = action
 
 
+class InsufficientAuthorityError(BusinessRuleViolationError):
+    """Raised when an actor tries to hand out authority they do not hold
+    themselves (assigning a role, granting a permission, or inheriting a
+    parent role whose permissions exceed their own)."""
+
+    code = ErrorCode.FORBIDDEN
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            "insufficient_authority", f"Cannot {action} beyond your own permissions"
+        )
+        self.action = action
+
+
+class OrganizationOwnerProtectedError(BusinessRuleViolationError):
+    """Raised when an operation would remove or demote the organization's
+    designated owner; ownership must be transferred first."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            "organization_owner_protected",
+            f"Cannot {action} the organization owner; transfer ownership first",
+        )
+        self.action = action
+
+
 # --- Security ---------------------------------------------------------------
 
 

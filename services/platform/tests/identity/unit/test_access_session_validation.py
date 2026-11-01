@@ -4,7 +4,8 @@ from datetime import timedelta
 
 import pytest
 from app.identity.application.authentication import AuthenticationService
-from app.identity.domain.entities import Session
+from app.identity.domain.entities import Session, User
+from app.identity.domain.value_objects import Email
 from app.identity.presentation.deps import get_current_user_claims
 from app.platform_core.errors.api_exceptions import UnauthorizedError
 from app.platform_core.events.dispatcher import EventDispatcher
@@ -66,11 +67,21 @@ def _session(*, user_id, expires_at=None) -> Session:
     )
 
 
+def _user(*, org_id) -> User:
+    user = User.register(
+        org_id=org_id, email=Email("member@example.com"), password_hash="hash", display_name="Member"
+    )
+    user.verify_email()
+    return user
+
+
 async def test_active_session_bound_to_the_claimed_user_is_accepted() -> None:
-    user_id = new_uuid7()
     org_id = new_uuid7()
+    user = _user(org_id=org_id)
+    user_id = user.id
     session = _session(user_id=user_id)
     uow = FakeUnitOfWork()
+    await uow.users.add(user)
     await uow.sessions.add(session)
 
     claims = await _authenticate(
@@ -152,4 +163,38 @@ async def test_access_token_with_an_expired_session_is_rejected() -> None:
             user_id=user_id,
             org_id=new_uuid7(),
             session_id=session.id,
+        )
+
+
+@pytest.mark.parametrize("deactivate", [False, True], ids=["suspended", "deactivated"])
+async def test_access_token_for_a_suspended_or_deactivated_user_is_rejected(deactivate: bool) -> None:
+    """Defense in depth: even if a session was somehow left unrevoked, an
+    account that is no longer ACTIVE must not authenticate."""
+    org_id = new_uuid7()
+    user = _user(org_id=org_id)
+    session = _session(user_id=user.id)
+    uow = FakeUnitOfWork()
+    await uow.users.add(user)
+    await uow.sessions.add(session)
+    if deactivate:
+        user.deactivate()
+    else:
+        user.suspend(reason="policy violation")
+    await uow.users.update(user)
+
+    with pytest.raises(UnauthorizedError):
+        await _authenticate(
+            service=_make_service(uow), user_id=user.id, org_id=org_id, session_id=session.id
+        )
+
+
+async def test_access_token_whose_user_record_is_missing_is_rejected() -> None:
+    user_id = new_uuid7()
+    session = _session(user_id=user_id)
+    uow = FakeUnitOfWork()
+    await uow.sessions.add(session)
+
+    with pytest.raises(UnauthorizedError):
+        await _authenticate(
+            service=_make_service(uow), user_id=user_id, org_id=new_uuid7(), session_id=session.id
         )
