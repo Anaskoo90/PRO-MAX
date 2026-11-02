@@ -565,3 +565,21 @@ async def test_role_in_use_maps_to_http_409() -> None:
     from app.platform_core.errors.handlers import _map_status_code
 
     assert _map_status_code(RoleInUseError(new_uuid7())) == 409
+
+
+async def test_revoking_the_owner_role_takes_the_organization_row_lock_but_other_roles_do_not() -> None:
+    uow = FakeUnitOfWork()
+    org, owner, owner_role = await _org_with_owner(uow)
+    other_role = Role.create_custom_role(org_id=org, name="support")
+    member = _make_member(org, email="member@example.com")
+    await uow.users.add(member)
+    await uow.roles.add(other_role)
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=member.id, role_id=other_role.id, org_id=org))
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=member.id, role_id=owner_role.id, org_id=org))
+    service = _make_service(uow)
+
+    await service.revoke_role_from_user(user_id=member.id, role_id=other_role.id, org_id=org, actor_user_id=owner.id)
+    assert uow.organizations.locked_org_ids == []  # ordinary role: no org-level serialization needed
+
+    await service.revoke_role_from_user(user_id=member.id, role_id=owner_role.id, org_id=org, actor_user_id=owner.id)
+    assert uow.organizations.locked_org_ids == [org]

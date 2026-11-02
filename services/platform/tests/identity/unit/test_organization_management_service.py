@@ -388,3 +388,16 @@ async def test_transfer_fails_closed_when_the_owner_role_is_not_seeded() -> None
         )
 
     assert org.owner_user_id == original_owner
+
+
+async def test_transfer_takes_the_organization_row_lock() -> None:
+    uow = FakeUnitOfWork()
+    org, _owner_role = await _org_with_owner_holding_role(uow)
+    member = _make_member(OrgId(org.id), email="new-owner@example.com", display_name="New Owner")
+    await uow.users.add(member)
+
+    await _make_service(uow).transfer_ownership(
+        org_id=org.id, new_owner_user_id=member.id, actor_user_id=org.owner_user_id
+    )
+
+    assert uow.organizations.locked_org_ids == [org.id]

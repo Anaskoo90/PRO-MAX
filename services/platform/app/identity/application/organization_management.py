@@ -215,7 +215,13 @@ class OrganizationManagementService:
 
     async def transfer_ownership(self, *, org_id: EntityId, new_owner_user_id: UUID, actor_user_id: UUID) -> OrganizationDTO:
         async with self._uow_factory() as uow:
-            org = await uow.organizations.get_by_id(org_id)
+            # Lock order: the organization row first (see
+            # SqlAlchemyOrganizationRepository.get_by_id_for_update). Holding
+            # it serializes this transfer against other transfers, user
+            # suspension/deactivation and owner-role revocation, so every
+            # check below runs against state no concurrent transaction can
+            # change until we commit.
+            org = await uow.organizations.get_by_id_for_update(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
             # Only the *designated* owner can hand ownership over. Holding the

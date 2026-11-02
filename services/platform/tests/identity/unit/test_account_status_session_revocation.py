@@ -187,3 +187,19 @@ async def test_the_designated_owner_cannot_deactivate_their_own_account() -> Non
         await _management(uow).deactivate_account(user_id=owner.id)
 
     assert owner.status == UserStatus.ACTIVE
+
+
+async def test_suspend_and_deactivate_take_the_organization_row_lock_first() -> None:
+    """Serializes them against ownership transfer (see
+    SqlAlchemyOrganizationRepository.get_by_id_for_update)."""
+    uow = FakeUnitOfWork()
+    org = await _add_org(uow, owner_user_id=UserId(new_uuid7()))
+    first = await _add_active_user(uow, OrgId(org.id))
+    second = await _add_active_user(uow, OrgId(org.id), email="second@example.com")
+
+    await _management(uow).suspend(
+        org_id=OrgId(org.id), user_id=first.id, reason="policy", actor_user_id=new_uuid7()
+    )
+    await _management(uow).deactivate_account(user_id=second.id)
+
+    assert uow.organizations.locked_org_ids == [org.id, org.id]

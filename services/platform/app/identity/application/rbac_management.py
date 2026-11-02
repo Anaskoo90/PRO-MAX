@@ -83,10 +83,19 @@ _OWNER_ROLE_NAME = "org_owner"
 
 
 class RoleService:
-    def __init__(self, *, uow_factory, dispatcher: EventDispatcher, permission_catalog: PermissionCatalogService) -> None:
+    def __init__(
+        self,
+        *,
+        uow_factory,
+        dispatcher: EventDispatcher,
+        permission_catalog: PermissionCatalogService,
+        owner_role_name: str = _OWNER_ROLE_NAME,
+    ) -> None:
         self._uow_factory = uow_factory
         self._dispatcher = dispatcher
         self._permission_catalog = permission_catalog
+        # Mirrors OrganizationManagementService's owner_system_role_name.
+        self._owner_role_name = owner_role_name
 
     async def create_custom_role(
         self, *, org_id: OrgId, name: str, description: str = "", actor_user_id: UUID
@@ -327,17 +336,23 @@ class RoleService:
 
     async def revoke_role_from_user(self, *, user_id: UserId, role_id: EntityId, org_id: OrgId, actor_user_id: UUID) -> None:
         async with self._uow_factory() as uow:
+            role = await uow.roles.get_by_id(role_id)
+            is_owner_role = role is not None and role.is_system_role and role.name == self._owner_role_name
+            org = None
+            if is_owner_role:
+                # Organization row first (same lock order as ownership
+                # transfer / suspension): the "is this the designated owner?"
+                # check below must not race a transfer that makes this user
+                # the owner, which would leave the owner without the role.
+                org = await uow.organizations.get_by_id_for_update(org_id)
             assignment = await uow.user_role_assignments.get(user_id, role_id)
             if assignment is None or assignment.org_id != org_id:
                 return
-            role = await uow.roles.get_by_id(role_id)
             if role is not None:
                 # The designated owner can't be demoted until ownership has
                 # been transferred through the dedicated flow.
-                if role.is_system_role and role.name == _OWNER_ROLE_NAME:
-                    org = await uow.organizations.get_by_id(org_id)
-                    if org is not None and org.owner_user_id == user_id:
-                        raise OrganizationOwnerProtectedError("remove the owner role from")
+                if is_owner_role and org is not None and org.owner_user_id == user_id:
+                    raise OrganizationOwnerProtectedError("remove the owner role from")
                 # Likewise you can't strip a role you couldn't have assigned.
                 await self._assert_actor_holds(
                     uow, actor_user_id=actor_user_id, org_id=org_id,

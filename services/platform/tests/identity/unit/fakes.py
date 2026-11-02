@@ -59,8 +59,15 @@ class FakeUserRepository:
 class FakeOrganizationRepository:
     def __init__(self) -> None:
         self.organizations: dict[EntityId, Organization] = {}
+        # org ids passed to get_by_id_for_update, in call order — lets unit
+        # tests assert which operations take the organization row lock.
+        self.locked_org_ids: list[EntityId] = []
 
     async def get_by_id(self, org_id: EntityId) -> Organization | None:
+        return self.organizations.get(org_id)
+
+    async def get_by_id_for_update(self, org_id: EntityId) -> Organization | None:
+        self.locked_org_ids.append(org_id)
         return self.organizations.get(org_id)
 
     async def get_by_slug(self, slug: str) -> Organization | None:
