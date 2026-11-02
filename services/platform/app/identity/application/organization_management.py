@@ -90,26 +90,26 @@ class OrganizationManagementService:
             if await uow.organizations.get_by_slug(slug) is not None:
                 raise OrganizationSlugTakenError(slug)
 
+            # Fail safely before anything is created: an organization whose
+            # owner never receives the owner role is permanently unmanageable
+            # (nobody could ever hold organization:manage_ownership), so a
+            # missing/unseeded owner role aborts the whole registration.
+            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
+            if owner_role is None:
+                raise OwnerRoleNotConfiguredError(self._owner_system_role_name)
+
+            # The organization records its owner's id at creation, so the id
+            # is chosen first and handed to User.register — the owner's real
+            # id is therefore correct from the start, including in the
+            # OrganizationCreated event (no placeholder, no later fix-up).
             owner_user_id = UserId(new_uuid7())
             org = Organization.create(name=org_name, slug=slug, owner_user_id=owner_user_id)
 
             password_hash = self._password_hasher.hash(owner_password)
             owner = User.register(
                 org_id=OrgId(org.id), email=Email(owner_email), password_hash=password_hash,
-                display_name=owner_display_name,
+                display_name=owner_display_name, user_id=owner_user_id,
             )
-            # User.register() generates its own id (required so it can record
-            # UserRegistered correctly) which will not match the placeholder
-            # owner_user_id used above to construct `org` — Organization.create()
-            # and User.register() each require the other's id up front, a
-            # genuine circular dependency, so one placeholder is unavoidable.
-            # Point the org at the real user id before anything is persisted.
-            # This is a plain attribute fix-up for the still-in-progress
-            # creation, not an ownership change, so it intentionally does not
-            # go through transfer_ownership() (which would record a
-            # misleading "ownership transferred" event for something that
-            # never had a different real owner).
-            org.owner_user_id = owner.id
 
             # Flushed between each dependent add: org/user/password_history/
             # user_role_assignments have real FK chains (users.org_id ->
@@ -123,11 +123,9 @@ class OrganizationManagementService:
             await uow.flush()
             await uow.password_history.add(PasswordHistoryEntry.create(user_id=owner.id, password_hash=password_hash))
 
-            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
-            if owner_role is not None:
-                await uow.user_role_assignments.add(
-                    UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
-                )
+            await uow.user_role_assignments.add(
+                UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
+            )
 
             events = org.pull_domain_events() + owner.pull_domain_events()
             await uow.audit_logs.add(

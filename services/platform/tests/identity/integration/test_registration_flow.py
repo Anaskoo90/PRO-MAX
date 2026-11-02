@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 from app.identity.application.organization_management import OrganizationManagementService
+from app.identity.infrastructure.seed_data import seed_identity
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.shared_kernel.utils import new_uuid7
@@ -21,6 +22,8 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_register_organization_with_owner_persists_both_aggregates(uow) -> None:
+    await seed_identity(uow, extra_permissions=())  # registration requires the seeded owner role
+
     def uow_factory():
         return uow
 

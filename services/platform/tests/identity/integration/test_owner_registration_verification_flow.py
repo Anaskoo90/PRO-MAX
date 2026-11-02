@@ -20,6 +20,7 @@ from app.identity.application.organization_management import OrganizationManagem
 from app.identity.domain.events import UserRegistered
 from app.identity.domain.exceptions import AccountNotActiveError
 from app.identity.infrastructure.outbox import OutboxMessageOrmModel
+from app.identity.infrastructure.seed_data import seed_identity
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.notifications.dispatcher import NotificationDispatcher
@@ -72,6 +73,7 @@ def _make_services(uow, notification_dispatcher: NotificationDispatcher | None =
 async def test_registration_succeeds_and_persists_verification_token_during_email_outage(
     uow,
 ) -> None:
+    await seed_identity(uow, extra_permissions=())  # registration requires the seeded owner role
     org_service, _ = _make_services(
         uow,
         NotificationDispatcher(email_provider=_UnavailableEmailProvider()),
@@ -97,6 +99,7 @@ async def test_registration_succeeds_and_persists_verification_token_during_emai
 async def test_self_registration_fires_user_registered_and_creates_a_usable_verification_token(
     uow,
 ) -> None:
+    await seed_identity(uow, extra_permissions=())  # registration requires the seeded owner role
     org_service, auth_service = _make_services(uow)
     slug = f"acme-{new_uuid7().hex[:12]}"
     email = f"owner-{new_uuid7().hex[:12]}@example.com"

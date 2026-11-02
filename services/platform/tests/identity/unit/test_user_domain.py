@@ -60,3 +60,22 @@ def test_successful_login_resets_failed_attempts() -> None:
     user.record_successful_login()
     assert user.failed_login_attempts == 0
     assert user.is_locked() is False
+
+
+def test_register_uses_a_caller_supplied_user_id_everywhere() -> None:
+    """Organization bootstrap pre-assigns the owner's id so the organization
+    can reference it at creation; the id (and the UserRegistered event) must
+    carry it, not a freshly generated one."""
+    chosen_id = new_uuid7()
+
+    user = User.register(
+        org_id=OrgId(new_uuid7()), email=Email("owner@example.com"), password_hash="hash",
+        display_name="Owner", user_id=chosen_id,
+    )
+
+    assert user.id == chosen_id
+    assert [event.aggregate_id for event in user.pull_domain_events()] == [chosen_id]
+
+
+def test_register_generates_an_id_when_none_is_supplied() -> None:
+    assert _new_user().id != _new_user().id
