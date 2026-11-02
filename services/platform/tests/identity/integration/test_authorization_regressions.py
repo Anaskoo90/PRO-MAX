@@ -10,12 +10,15 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.rbac_engine import PermissionEvaluator, RoleResolutionService
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.application.user_management import UserManagementService
 from app.identity.domain.exceptions import (
     AccountNotActiveError,
     InsufficientAuthorityError,
+    InvalidOwnershipTransferTargetError,
+    NotOrganizationOwnerError,
     OrganizationOwnerProtectedError,
     SessionNotFoundError,
 )
@@ -155,3 +158,81 @@ async def test_designated_owner_cannot_be_demoted_without_a_transfer(uow) -> Non
         )
 
     assert await uow.user_role_assignments.get(owner.id, owner_role.id) is not None
+
+
+# --- Ownership transfer (R3), end-to-end against Postgres with seeded roles ----------------
+
+
+def _orgs(uow):
+    return OrganizationManagementService(
+        uow_factory=lambda: uow, password_hasher=PasswordHashingService(), dispatcher=EventDispatcher()
+    )
+
+
+def _evaluator(uow) -> PermissionEvaluator:
+    return PermissionEvaluator(uow_factory=lambda: uow, role_resolution=RoleResolutionService(uow_factory=lambda: uow))
+
+
+async def test_r3_previous_owner_loses_owner_powers_and_cannot_take_ownership_back(uow) -> None:
+    org, owner, admin, owner_role = await _seeded_org_with_owner_and_admin(uow)
+    org_id = OrgId(org.id)
+    await _orgs(uow).transfer_ownership(org_id=org_id, new_owner_user_id=admin.id, actor_user_id=owner.id)
+
+    evaluator = _evaluator(uow)
+    assert not await evaluator.has_permission(
+        user_id=owner.id, org_id=org_id, resource="organization", action="manage_ownership"
+    )
+    assert await evaluator.has_permission(
+        user_id=admin.id, org_id=org_id, resource="organization", action="manage_ownership"
+    )
+    with pytest.raises(NotOrganizationOwnerError):  # the former owner can't simply take it back
+        await _orgs(uow).transfer_ownership(org_id=org_id, new_owner_user_id=owner.id, actor_user_id=owner.id)
+    assert (await uow.organizations.get_by_id(org_id)).owner_user_id == admin.id
+
+
+async def test_r3_previous_owners_other_roles_survive_the_transfer(uow) -> None:
+    org, owner, admin, owner_role = await _seeded_org_with_owner_and_admin(uow)
+    org_id = OrgId(org.id)
+    member_role = await uow.roles.get_by_name(None, "member")
+    await uow.user_role_assignments.add(UserRoleAssignment.create(user_id=owner.id, role_id=member_role.id, org_id=org_id))
+    await uow.commit()
+
+    await _orgs(uow).transfer_ownership(org_id=org_id, new_owner_user_id=admin.id, actor_user_id=owner.id)
+
+    assert await uow.user_role_assignments.get(owner.id, owner_role.id) is None
+    assert await uow.user_role_assignments.get(owner.id, member_role.id) is not None
+
+
+async def test_r3b_co_owner_cannot_hijack_ownership_and_strip_the_original_owner(uow) -> None:
+    org, owner, admin, owner_role = await _seeded_org_with_owner_and_admin(uow)
+    org_id = OrgId(org.id)
+    # the owner legitimately makes the admin a co-owner
+    await _role_service(uow).assign_role_to_user(
+        user_id=admin.id, role_id=owner_role.id, org_id=org_id, actor_user_id=owner.id
+    )
+
+    with pytest.raises(NotOrganizationOwnerError):
+        await _orgs(uow).transfer_ownership(org_id=org_id, new_owner_user_id=admin.id, actor_user_id=admin.id)
+    with pytest.raises(OrganizationOwnerProtectedError):  # and the H2 guard still bites
+        await _role_service(uow).revoke_role_from_user(
+            user_id=owner.id, role_id=owner_role.id, org_id=org_id, actor_user_id=admin.id
+        )
+
+    assert (await uow.organizations.get_by_id(org_id)).owner_user_id == owner.id
+    assert await _evaluator(uow).has_permission(
+        user_id=owner.id, org_id=org_id, resource="organization", action="manage_ownership"
+    )
+
+
+async def test_r3c_ownership_cannot_be_transferred_to_a_suspended_user(uow) -> None:
+    org, owner, admin, owner_role = await _seeded_org_with_owner_and_admin(uow)
+    org_id = OrgId(org.id)
+    await _user_management(uow).suspend(
+        org_id=org_id, user_id=admin.id, reason="regression", actor_user_id=UserId(owner.id)
+    )
+
+    with pytest.raises(InvalidOwnershipTransferTargetError):
+        await _orgs(uow).transfer_ownership(org_id=org_id, new_owner_user_id=admin.id, actor_user_id=owner.id)
+
+    assert (await uow.organizations.get_by_id(org_id)).owner_user_id == owner.id
+    assert await uow.user_role_assignments.get(admin.id, owner_role.id) is None

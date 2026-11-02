@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from app.platform_core.errors.domain_exceptions import (
     BusinessRuleViolationError,
+    DomainError,
     EntityNotFoundError,
 )
 from app.platform_core.shared_kernel.error_codes import ErrorCode
@@ -198,6 +199,42 @@ class InvitationNoLongerValidError(BusinessRuleViolationError):
 
     def __init__(self) -> None:
         super().__init__("invitation_no_longer_valid", "This invitation can no longer be accepted")
+
+
+class NotOrganizationOwnerError(BusinessRuleViolationError):
+    """Only the organization's designated owner may hand ownership over;
+    holding the org_owner role alone (e.g. as a co-owner or a former owner)
+    is not enough."""
+
+    code = ErrorCode.FORBIDDEN
+
+    def __init__(self) -> None:
+        super().__init__(
+            "not_organization_owner", "Only the organization owner can transfer ownership"
+        )
+
+
+class InvalidOwnershipTransferTargetError(BusinessRuleViolationError):
+    def __init__(self, reason: str) -> None:
+        messages = {
+            "not_active": "The new owner must be an active member of the organization",
+            "already_owner": "That user already owns the organization",
+        }
+        super().__init__("invalid_ownership_transfer_target", messages[reason])
+        self.reason = reason
+
+
+class OwnerRoleNotConfiguredError(DomainError):
+    """The seeded owner system role is missing. This is a deployment/seed
+    problem, not a client error, so it maps to HTTP 500 and is logged with a
+    traceback; operations that would leave an owner without the role refuse to
+    run instead of silently continuing."""
+
+    code = ErrorCode.INTERNAL_ERROR
+
+    def __init__(self, role_name: str) -> None:
+        super().__init__(f"Organization owner role '{role_name}' is not configured")
+        self.role_name = role_name
 
 
 class RoleAlreadyExistsError(BusinessRuleViolationError):

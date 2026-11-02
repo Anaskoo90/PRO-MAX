@@ -21,10 +21,13 @@ from uuid import UUID
 
 from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
-from app.identity.domain.entities import PasswordHistoryEntry, User
+from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
 from app.identity.domain.exceptions import (
+    InvalidOwnershipTransferTargetError,
+    NotOrganizationOwnerError,
     OrganizationNotFoundError,
     OrganizationSlugTakenError,
+    OwnerRoleNotConfiguredError,
     UserNotFoundError,
     WeakPasswordError,
 )
@@ -215,24 +218,46 @@ class OrganizationManagementService:
             org = await uow.organizations.get_by_id(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
+            # Only the *designated* owner can hand ownership over. Holding the
+            # org_owner role is not enough: co-owners and former owners hold
+            # it too and must not be able to take the organization.
+            if org.owner_user_id != actor_user_id:
+                raise NotOrganizationOwnerError()
             new_owner = await uow.users.get_by_id(EntityId(new_owner_user_id))
             if new_owner is None or new_owner.org_id != org.id:
                 raise UserNotFoundError(new_owner_user_id)
+            if new_owner.id == org.owner_user_id:
+                raise InvalidOwnershipTransferTargetError("already_owner")
+            if new_owner.status != UserStatus.ACTIVE:
+                raise InvalidOwnershipTransferTargetError("not_active")
+            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
+            if owner_role is None:
+                raise OwnerRoleNotConfiguredError(self._owner_system_role_name)
+
+            previous_owner_user_id = org.owner_user_id
             org.transfer_ownership(UserId(new_owner_user_id))
             await uow.organizations.update(org)
 
-            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
-            if owner_role is not None and await uow.user_role_assignments.get(UserId(new_owner_user_id), owner_role.id) is None:
+            if await uow.user_role_assignments.get(UserId(new_owner_user_id), owner_role.id) is None:
                 await uow.user_role_assignments.add(
                     UserRoleAssignment.create(user_id=UserId(new_owner_user_id), role_id=owner_role.id, org_id=OrgId(org.id))
                 )
+            # Same transaction: the previous owner stops being an owner at the
+            # moment the new one starts. Only the owner role is removed; any
+            # other roles they hold are left exactly as they were.
+            previous_assignment = await uow.user_role_assignments.get(previous_owner_user_id, owner_role.id)
+            if previous_assignment is not None:
+                await uow.user_role_assignments.delete(previous_assignment.id)
 
             events = org.pull_domain_events()
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action="ownership_transferred",
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
-                    metadata={"new_owner_user_id": str(new_owner_user_id)},
+                    metadata={
+                        "new_owner_user_id": str(new_owner_user_id),
+                        "previous_owner_user_id": str(previous_owner_user_id),
+                    },
                 )
             )
             await append_domain_events_to_outbox(

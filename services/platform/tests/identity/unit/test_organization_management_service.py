@@ -2,11 +2,15 @@ import pytest
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.domain.entities import User, UserStatus
 from app.identity.domain.exceptions import (
+    InvalidOwnershipTransferTargetError,
+    NotOrganizationOwnerError,
     OrganizationNotFoundError,
     OrganizationSlugTakenError,
+    OwnerRoleNotConfiguredError,
     UserNotFoundError,
 )
 from app.identity.domain.organization import Organization
+from app.identity.domain.rbac import Role, UserRoleAssignment
 from app.identity.domain.value_objects import Email
 from app.platform_core.api.sorting import SortField
 from app.platform_core.events.dispatcher import EventDispatcher
@@ -228,30 +232,159 @@ async def test_transfer_ownership_rejects_a_user_from_another_org() -> None:
         await service.transfer_ownership(
             org_id=org.id,
             new_owner_user_id=foreign_user.id,
-            actor_user_id=new_uuid7(),
+            actor_user_id=org.owner_user_id,
         )
 
     assert org.owner_user_id == original_owner_user_id
     assert uow.audit_logs.records == []
 
 
+async def _seed_owner_role(uow: FakeUnitOfWork) -> Role:
+    owner_role = Role.create_system_role(name="org_owner", description="Owner")
+    await uow.roles.add(owner_role)
+    return owner_role
+
+
+async def _org_with_owner_holding_role(uow: FakeUnitOfWork) -> tuple[Organization, Role]:
+    org = _make_org()
+    owner_role = await _seed_owner_role(uow)
+    await uow.organizations.add(org)
+    await uow.user_role_assignments.add(
+        UserRoleAssignment.create(user_id=org.owner_user_id, role_id=owner_role.id, org_id=OrgId(org.id))
+    )
+    return org, owner_role
+
+
 async def test_transfer_ownership_allows_a_same_org_member() -> None:
     uow = FakeUnitOfWork()
-    org = _make_org()
+    org, owner_role = await _org_with_owner_holding_role(uow)
     member = _make_member(
         OrgId(org.id),
         email="new-owner@example.com",
         display_name="New Owner",
     )
-    await uow.organizations.add(org)
     await uow.users.add(member)
     service = _make_service(uow)
 
     result = await service.transfer_ownership(
         org_id=org.id,
         new_owner_user_id=member.id,
-        actor_user_id=new_uuid7(),
+        actor_user_id=org.owner_user_id,
     )
 
     assert result.owner_user_id == member.id
     assert uow.audit_logs.records[-1].action == "ownership_transferred"
+    assert await uow.user_role_assignments.get(member.id, owner_role.id) is not None
+
+
+# --- ownership transfer hardening (R3) -------------------------------------
+
+
+async def test_transfer_revokes_the_previous_owners_owner_role_but_keeps_their_other_roles() -> None:
+    uow = FakeUnitOfWork()
+    org, owner_role = await _org_with_owner_holding_role(uow)
+    previous_owner_id = org.owner_user_id
+    other_role = Role.create_custom_role(org_id=OrgId(org.id), name="support")
+    await uow.roles.add(other_role)
+    await uow.user_role_assignments.add(
+        UserRoleAssignment.create(user_id=previous_owner_id, role_id=other_role.id, org_id=OrgId(org.id))
+    )
+    successor = _make_member(OrgId(org.id), email="successor@example.com", display_name="Successor")
+    await uow.users.add(successor)
+
+    await _make_service(uow).transfer_ownership(
+        org_id=org.id, new_owner_user_id=successor.id, actor_user_id=previous_owner_id
+    )
+
+    assert await uow.user_role_assignments.get(previous_owner_id, owner_role.id) is None
+    assert await uow.user_role_assignments.get(previous_owner_id, other_role.id) is not None  # untouched
+    assert await uow.user_role_assignments.get(successor.id, owner_role.id) is not None
+
+
+async def test_previous_owner_cannot_transfer_ownership_back() -> None:
+    uow = FakeUnitOfWork()
+    org, _owner_role = await _org_with_owner_holding_role(uow)
+    previous_owner_id = org.owner_user_id
+    successor = _make_member(OrgId(org.id), email="successor@example.com", display_name="Successor")
+    previous_owner = _make_member(OrgId(org.id), email="former@example.com", display_name="Former")
+    previous_owner.id = previous_owner_id
+    await uow.users.add(successor)
+    await uow.users.add(previous_owner)
+    service = _make_service(uow)
+    await service.transfer_ownership(org_id=org.id, new_owner_user_id=successor.id, actor_user_id=previous_owner_id)
+
+    with pytest.raises(NotOrganizationOwnerError):
+        await service.transfer_ownership(
+            org_id=org.id, new_owner_user_id=previous_owner_id, actor_user_id=previous_owner_id
+        )
+
+    assert org.owner_user_id == successor.id
+
+
+async def test_a_co_owner_who_is_not_the_designated_owner_cannot_transfer_ownership() -> None:
+    uow = FakeUnitOfWork()
+    org, owner_role = await _org_with_owner_holding_role(uow)
+    co_owner = _make_member(OrgId(org.id), email="co@example.com", display_name="Co-owner")
+    await uow.users.add(co_owner)
+    await uow.user_role_assignments.add(
+        UserRoleAssignment.create(user_id=co_owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
+    )
+    original_owner = org.owner_user_id
+
+    with pytest.raises(NotOrganizationOwnerError):
+        await _make_service(uow).transfer_ownership(
+            org_id=org.id, new_owner_user_id=co_owner.id, actor_user_id=co_owner.id
+        )
+
+    assert org.owner_user_id == original_owner
+    assert await uow.user_role_assignments.get(original_owner, owner_role.id) is not None
+    assert uow.audit_logs.records == []
+
+
+@pytest.mark.parametrize(
+    "status", [UserStatus.SUSPENDED, UserStatus.DEACTIVATED, UserStatus.PENDING_VERIFICATION]
+)
+async def test_transfer_rejects_a_target_that_is_not_active(status: UserStatus) -> None:
+    uow = FakeUnitOfWork()
+    org, owner_role = await _org_with_owner_holding_role(uow)
+    target = _make_member(OrgId(org.id), email="target@example.com", display_name="Target", status=status)
+    await uow.users.add(target)
+    original_owner = org.owner_user_id
+
+    with pytest.raises(InvalidOwnershipTransferTargetError):
+        await _make_service(uow).transfer_ownership(
+            org_id=org.id, new_owner_user_id=target.id, actor_user_id=original_owner
+        )
+
+    assert org.owner_user_id == original_owner
+    assert await uow.user_role_assignments.get(target.id, owner_role.id) is None
+    assert await uow.user_role_assignments.get(original_owner, owner_role.id) is not None
+
+
+async def test_transfer_to_the_current_owner_is_rejected() -> None:
+    uow = FakeUnitOfWork()
+    org, _owner_role = await _org_with_owner_holding_role(uow)
+    owner = _make_member(OrgId(org.id), email="owner@example.com", display_name="Owner")
+    owner.id = org.owner_user_id
+    await uow.users.add(owner)
+
+    with pytest.raises(InvalidOwnershipTransferTargetError):
+        await _make_service(uow).transfer_ownership(
+            org_id=org.id, new_owner_user_id=owner.id, actor_user_id=owner.id
+        )
+
+
+async def test_transfer_fails_closed_when_the_owner_role_is_not_seeded() -> None:
+    uow = FakeUnitOfWork()
+    org = _make_org()
+    await uow.organizations.add(org)  # note: no owner role in the fake role repository
+    target = _make_member(OrgId(org.id), email="target@example.com", display_name="Target")
+    await uow.users.add(target)
+    original_owner = org.owner_user_id
+
+    with pytest.raises(OwnerRoleNotConfiguredError):
+        await _make_service(uow).transfer_ownership(
+            org_id=org.id, new_owner_user_id=target.id, actor_user_id=original_owner
+        )
+
+    assert org.owner_user_id == original_owner
