@@ -183,6 +183,17 @@ class FakeOutboxWriter:
         self.events.append(event)
 
 
+class FakeOrganizationInvitationRepository:
+    """Only what RoleService needs (role-in-use check); invitation flows are
+    covered end-to-end against the real database."""
+
+    def __init__(self) -> None:
+        self.referenced_role_ids: set[EntityId] = set()
+
+    async def exists_for_role(self, role_id: EntityId) -> bool:
+        return role_id in self.referenced_role_ids
+
+
 class FakeUnitOfWork:
     """Satisfies IdentityUnitOfWorkPort for the repositories a given test
     actually exercises; unused attributes are left None deliberately, so a
@@ -200,6 +211,7 @@ class FakeUnitOfWork:
         self.permissions = permissions or FakePermissionRepository()
         self.user_role_assignments = user_role_assignments or FakeUserRoleAssignmentRepository()
         self.audit_logs = audit_logs or FakeAuditLogRepository()
+        self.organization_invitations = FakeOrganizationInvitationRepository()
         self.outbox = FakeOutboxWriter()
 
     async def flush(self) -> None:

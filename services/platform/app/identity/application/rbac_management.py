@@ -13,14 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.identity.application.rbac_engine import RoleResolutionService
+from app.identity.application import authority
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.exceptions import (
-    InsufficientAuthorityError,
     OrganizationOwnerProtectedError,
     PermissionNotFoundError,
     RoleAlreadyExistsError,
     RoleHierarchyCycleError,
+    RoleInUseError,
     RoleNotFoundError,
     UserNotFoundError,
 )
@@ -87,7 +87,6 @@ class RoleService:
         self._uow_factory = uow_factory
         self._dispatcher = dispatcher
         self._permission_catalog = permission_catalog
-        self._role_resolution = RoleResolutionService(uow_factory=uow_factory)
 
     async def create_custom_role(
         self, *, org_id: OrgId, name: str, description: str = "", actor_user_id: UUID
@@ -201,6 +200,11 @@ class RoleService:
             role = await self._get_mutable_role_for_org(
                 uow, role_id=role_id, org_id=org_id
             )
+            # organization_invitations.role_id is a hard FK, so deleting a role
+            # an invitation still points at would surface as a raw database
+            # IntegrityError (HTTP 500). Report it as the conflict it is.
+            if await uow.organization_invitations.exists_for_role(role_id):
+                raise RoleInUseError(role_id)
             role.mark_deleted()
             events = role.pull_domain_events()
             await uow.roles.delete(role_id)
@@ -373,34 +377,14 @@ class RoleService:
 
     @staticmethod
     async def _effective_permission_ids(uow, role: Role) -> set[EntityId]:
-        """Permissions a role grants, including everything inherited up its
-        parent chain (the same walk RoleResolutionService performs)."""
-        permission_ids: set[EntityId] = set()
-        visited: set[EntityId] = set()
-        cursor: Role | None = role
-        while cursor is not None and cursor.id not in visited:
-            visited.add(cursor.id)
-            permission_ids |= cursor.permission_ids
-            cursor = (
-                await uow.roles.get_by_id(cursor.parent_role_id)
-                if cursor.parent_role_id is not None
-                else None
-            )
-        return permission_ids
+        return await authority.effective_permission_ids(uow, role)
 
     async def _assert_actor_holds(
         self, uow, *, actor_user_id: UUID, org_id: OrgId, required: set[EntityId], action: str
     ) -> None:
-        if not required:
-            return
-        actor_roles = await self._role_resolution.resolve_effective_roles(
-            uow=uow, user_id=UserId(actor_user_id), org_id=org_id
+        await authority.assert_actor_holds(
+            uow, actor_user_id=actor_user_id, org_id=org_id, required=required, action=action
         )
-        held: set[EntityId] = set()
-        for actor_role in actor_roles:
-            held |= actor_role.permission_ids
-        if not required <= held:
-            raise InsufficientAuthorityError(action)
 
     @staticmethod
     async def _get_mutable_role_for_org(

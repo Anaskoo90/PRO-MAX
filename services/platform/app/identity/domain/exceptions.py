@@ -176,6 +176,30 @@ class RoleNotFoundError(EntityNotFoundError):
         super().__init__("Role", role_id)
 
 
+class RoleInUseError(BusinessRuleViolationError):
+    """A role cannot be deleted while other records (currently: organization
+    invitations) still reference it. Mapped to HTTP 409."""
+
+    code = ErrorCode.CONFLICT
+
+    def __init__(self, role_id: object) -> None:
+        super().__init__(
+            "role_in_use",
+            "Role is still referenced by one or more invitations and cannot be deleted",
+        )
+        self.role_id = role_id
+
+
+class InvitationNoLongerValidError(BusinessRuleViolationError):
+    """The invitation can no longer be redeemed because the inviter is no
+    longer active or no longer authorized to grant the invited role. The
+    message is deliberately generic: the invitee is not entitled to details
+    about the inviter's account or the organization's role configuration."""
+
+    def __init__(self) -> None:
+        super().__init__("invitation_no_longer_valid", "This invitation can no longer be accepted")
+
+
 class RoleAlreadyExistsError(BusinessRuleViolationError):
     def __init__(self, name: str) -> None:
         super().__init__("role_already_exists", f"A role named '{name}' already exists")

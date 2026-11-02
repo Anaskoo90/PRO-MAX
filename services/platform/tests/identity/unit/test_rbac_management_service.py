@@ -4,6 +4,7 @@ from app.identity.domain.entities import User
 from app.identity.domain.exceptions import (
     InsufficientAuthorityError,
     OrganizationOwnerProtectedError,
+    RoleInUseError,
     RoleNotFoundError,
     UserNotFoundError,
 )
@@ -545,3 +546,22 @@ async def test_revoking_a_role_requires_the_authority_to_have_assigned_it() -> N
         )
 
     assert await uow.user_role_assignments.get(victim.id, strong.id) is not None
+
+
+async def test_delete_role_is_refused_with_a_conflict_while_an_invitation_references_it() -> None:
+    uow = FakeUnitOfWork()
+    org_id = OrgId(new_uuid7())
+    role = Role.create_custom_role(org_id=org_id, name="invited-into")
+    await uow.roles.add(role)
+    uow.organization_invitations.referenced_role_ids.add(role.id)
+
+    with pytest.raises(RoleInUseError):
+        await _make_service(uow).delete_role(org_id=org_id, role_id=role.id, actor_user_id=new_uuid7())
+
+    assert await uow.roles.get_by_id(role.id) is not None
+
+
+async def test_role_in_use_maps_to_http_409() -> None:
+    from app.platform_core.errors.handlers import _map_status_code
+
+    assert _map_status_code(RoleInUseError(new_uuid7())) == 409
