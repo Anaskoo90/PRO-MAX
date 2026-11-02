@@ -25,6 +25,7 @@ from app.identity.infrastructure.orm_models import (
 from app.platform_core.api.sorting import SortField
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.shared_kernel.types import EntityId, OrgId
+from app.platform_core.shared_kernel.utils import utcnow
 
 # Only fields with a real, indexed-or-plain column behind them — same
 # discipline as ticket_system's _SORTABLE_COLUMNS (Phase 2A).
@@ -130,6 +131,23 @@ class SqlAlchemySessionRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [mappers.session_to_domain(r) for r in rows]
+
+    async def revoke_all_for_org(self, org_id: EntityId) -> int:
+        """Revoke every still-active session of every user in the organization
+        with one UPDATE (a tenant can have thousands; loading and revoking them
+        one by one would be slow and hold row locks for longer). Returns the
+        number of sessions revoked."""
+        stmt = (
+            update(SessionOrmModel)
+            .where(
+                SessionOrmModel.revoked_at.is_(None),
+                SessionOrmModel.user_id.in_(select(UserOrmModel.id).where(UserOrmModel.org_id == org_id)),
+            )
+            .values(revoked_at=utcnow())
+            .returning(SessionOrmModel.id)
+            .execution_options(synchronize_session=False)
+        )
+        return len((await self._session.execute(stmt)).all())
 
     async def add(self, session: Session) -> None:
         self._session.add(mappers.session_to_orm(session))

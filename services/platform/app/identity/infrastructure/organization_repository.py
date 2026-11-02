@@ -43,6 +43,24 @@ class SqlAlchemyOrganizationRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return mappers.organization_to_domain(row) if row and row.deleted_at is None else None
 
+    async def get_by_id_for_share(self, org_id: EntityId) -> Organization | None:
+        """Load the organization with a shared row lock (`FOR SHARE`).
+
+        Used by authentication (login, MFA completion, refresh) so that issuing
+        a session can't interleave with the organization being suspended:
+        shared locks don't block one another, but they conflict with the
+        `FOR UPDATE` that suspension takes. Same lock order as
+        get_by_id_for_update: the organization row is always locked FIRST.
+        """
+        stmt = (
+            select(OrganizationOrmModel)
+            .where(OrganizationOrmModel.id == org_id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return mappers.organization_to_domain(row) if row and row.deleted_at is None else None
+
     async def get_by_slug(self, slug: str) -> Organization | None:
         stmt = select(OrganizationOrmModel).where(
             OrganizationOrmModel.slug == slug, OrganizationOrmModel.deleted_at.is_(None)

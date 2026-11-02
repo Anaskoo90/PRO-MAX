@@ -303,18 +303,30 @@ class OrganizationManagementService:
                 raise UserNotFoundError(user_id)
             return user_to_profile_dto(user)
 
-    async def _set_status(self, *, org_id: EntityId, action: str, transition, actor_user_id: UUID) -> OrganizationDTO:
+    async def _set_status(
+        self, *, org_id: EntityId, action: str, transition, actor_user_id: UUID, revoke_sessions: bool = False
+    ) -> OrganizationDTO:
         async with self._uow_factory() as uow:
-            org = await uow.organizations.get_by_id(org_id)
+            # Organization row first (FOR UPDATE), the same lock order as
+            # ownership transfer and user suspension. Authentication takes the
+            # matching FOR SHARE before issuing a session, so a login/refresh
+            # either finished before this lock was granted (its session is
+            # revoked below) or waits and then sees the new status.
+            org = await uow.organizations.get_by_id_for_update(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
             transition(org)
             await uow.organizations.update(org)
             events = org.pull_domain_events()
+            # Suspending/deactivating must also end sessions that already
+            # exist; reactivation deliberately does not resurrect them (users
+            # log in again).
+            revoked_sessions = await uow.sessions.revoke_all_for_org(org.id) if revoke_sessions else None
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action=action,
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
+                    metadata=None if revoked_sessions is None else {"revoked_sessions": revoked_sessions},
                 )
             )
             await append_domain_events_to_outbox(
@@ -327,10 +339,10 @@ class OrganizationManagementService:
             return _to_dto(org)
 
     async def suspend(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
-        return await self._set_status(org_id=org_id, action="organization_suspended", transition=Organization.suspend, actor_user_id=actor_user_id)
+        return await self._set_status(org_id=org_id, action="organization_suspended", transition=Organization.suspend, actor_user_id=actor_user_id, revoke_sessions=True)
 
     async def reactivate(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
         return await self._set_status(org_id=org_id, action="organization_reactivated", transition=Organization.reactivate, actor_user_id=actor_user_id)
 
     async def deactivate(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
-        return await self._set_status(org_id=org_id, action="organization_deactivated", transition=Organization.deactivate, actor_user_id=actor_user_id)
+        return await self._set_status(org_id=org_id, action="organization_deactivated", transition=Organization.deactivate, actor_user_id=actor_user_id, revoke_sessions=True)

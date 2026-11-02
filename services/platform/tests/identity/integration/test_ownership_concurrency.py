@@ -8,6 +8,8 @@ checks and BEFORE its write (while it holds whatever locks it took), the
 second operation is started and given time to either run into the lock or,
 absent locking, race through, and only then is the first released.
 
+The last section covers organization suspension racing logins and refreshes.
+
 Everything the tests create (organizations, users, a uniquely named owner
 role) is deleted afterwards, so they leave the shared test database as they
 found it.
@@ -21,6 +23,7 @@ from dataclasses import dataclass, field
 
 import pytest
 import pytest_asyncio
+from app.identity.application.authentication import AuthenticationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.application.user_management import UserManagementService
@@ -28,19 +31,25 @@ from app.identity.domain.entities import User, UserStatus
 from app.identity.domain.exceptions import (
     InvalidOwnershipTransferTargetError,
     NotOrganizationOwnerError,
+    OrganizationNotActiveError,
     OrganizationOwnerProtectedError,
+    SessionNotFoundError,
 )
-from app.identity.domain.organization import Organization
+from app.identity.domain.organization import Organization, OrganizationStatus
 from app.identity.domain.rbac import Role, UserRoleAssignment
 from app.identity.domain.value_objects import Email
 from app.identity.infrastructure.organization_repository import SqlAlchemyOrganizationRepository
 from app.identity.infrastructure.rbac_repositories import SqlAlchemyUserRoleAssignmentRepository
-from app.identity.infrastructure.repositories import SqlAlchemyUserRepository
+from app.identity.infrastructure.repositories import (
+    SqlAlchemySessionRepository,
+    SqlAlchemyUserRepository,
+)
 from app.identity.infrastructure.unit_of_work import IdentityUnitOfWork
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
 from app.platform_core.security.hashing import PasswordHashingService
+from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.types import OrgId, UserId
 from app.platform_core.shared_kernel.utils import new_uuid7
 from sqlalchemy import bindparam, text
@@ -79,6 +88,15 @@ class _Env:
             dispatcher=EventDispatcher(),
             permission_catalog=PermissionCatalogService(uow_factory=self.make_uow),
             owner_role_name=self.owner_role_name,
+        )
+
+    def auth(self) -> AuthenticationService:
+        return AuthenticationService(
+            uow_factory=self.make_uow,
+            password_hasher=PasswordHashingService(),
+            token_service=JwtTokenService(signing_key="a" * 32),
+            dispatcher=EventDispatcher(),
+            audit_logger=AuditLogger(FakeAuditRecordSink()),
         )
 
     def users(self) -> UserManagementService:
@@ -405,3 +423,105 @@ async def test_overlapping_organization_updates_serialize_and_the_loser_conflict
 
     async with env.make_uow() as uow:
         assert (await uow.organizations.get_by_id(scenario.org_id)).name == "first"
+
+
+# --------------------------------------------------------------------------- organization suspension vs authentication
+
+
+async def _race_observed(gate: _Gate, first, second):
+    """Like _race, but also reports whether `second` had ALREADY finished
+    before `first` was released (i.e. whether it was NOT blocked on a lock)."""
+    task_first = asyncio.create_task(first())
+    await asyncio.wait_for(gate.reached.wait(), 20)
+    task_second = asyncio.create_task(second())
+    await asyncio.sleep(_SETTLE_SECONDS)
+    second_finished_early = task_second.done()
+    gate.release.set()
+    results = await asyncio.gather(task_first, task_second, return_exceptions=True)
+    return results, second_finished_early
+
+
+async def _active_sessions(env: _Env, scenario: _Org) -> int:
+    async with env.make_uow() as uow:
+        return (
+            await uow.session.execute(
+                text(
+                    "SELECT count(*) FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id "
+                    "WHERE u.org_id = :org AND s.revoked_at IS NULL"
+                ),
+                {"org": scenario.org_id},
+            )
+        ).scalar_one()
+
+
+async def _org_status(env: _Env, scenario: _Org) -> OrganizationStatus:
+    async with env.make_uow() as uow:
+        return (await uow.organizations.get_by_id(scenario.org_id)).status
+
+
+async def _start_login_or_refresh(env: _Env, scenario: _Org, kind: str):
+    """Returns the zero-arg coroutine factory for the authentication operation."""
+    email = str(scenario.admin.email)
+    if kind == "login":
+        return lambda: env.auth().login(
+            org_id=scenario.org_id, email=email, password=_PASSWORD,
+            ip_address="127.0.0.1", device_info=None, remember_me=False,
+        )
+    tokens = (
+        await env.auth().login(
+            org_id=scenario.org_id, email=email, password=_PASSWORD,
+            ip_address="127.0.0.1", device_info=None, remember_me=False,
+        )
+    ).tokens
+    return lambda: env.auth().refresh(raw_refresh_token=tokens.refresh_token)
+
+
+@pytest.mark.parametrize("kind", ["login", "refresh"])
+async def test_a_session_issued_while_the_organization_is_being_suspended_is_still_revoked(
+    env, monkeypatch, kind: str
+) -> None:
+    """The session is created (and the authentication transaction holds the
+    organization's shared lock) when suspension starts. Suspension must wait
+    for it, then revoke it: no active session may survive the suspension."""
+    scenario = await _bootstrap(env)
+    authenticate = await _start_login_or_refresh(env, scenario, kind)
+    gate = _gate_on(monkeypatch, SqlAlchemySessionRepository, "add")  # parks just before the new session is written
+
+    outcome, suspension_ran_ahead = await _race_observed(
+        gate,
+        authenticate,
+        lambda: env.organizations().suspend(org_id=scenario.org_id, actor_user_id=scenario.owner.id),
+    )
+    authentication, suspension = outcome
+
+    assert not isinstance(authentication, Exception), authentication
+    assert not isinstance(suspension, Exception), suspension
+    assert not suspension_ran_ahead, "suspension must wait for the in-flight authentication (shared lock)"
+    assert await _org_status(env, scenario) == OrganizationStatus.SUSPENDED
+    assert await _active_sessions(env, scenario) == 0, "a session survived the suspension"
+
+
+@pytest.mark.parametrize("kind", ["login", "refresh"])
+async def test_authentication_that_starts_during_a_suspension_is_refused_and_issues_nothing(
+    env, monkeypatch, kind: str
+) -> None:
+    scenario = await _bootstrap(env)
+    authenticate = await _start_login_or_refresh(env, scenario, kind)
+    gate = _gate_on(monkeypatch, SqlAlchemySessionRepository, "revoke_all_for_org")  # parks mid-suspension, lock held
+
+    outcome, authentication_ran_ahead = await _race_observed(
+        gate,
+        lambda: env.organizations().suspend(org_id=scenario.org_id, actor_user_id=scenario.owner.id),
+        authenticate,
+    )
+    suspension, authentication = outcome
+
+    assert not isinstance(suspension, Exception), suspension
+    # refused either at the organization check (blocked on the lock, then saw SUSPENDED) or, for refresh, if its
+    # session row was already revoked when it was read; either way nothing was issued
+    assert isinstance(authentication, (OrganizationNotActiveError, SessionNotFoundError)), authentication
+    if kind == "login":
+        assert isinstance(authentication, OrganizationNotActiveError)
+        assert not authentication_ran_ahead, "login must wait for the suspension (shared vs exclusive lock)"
+    assert await _org_status(env, scenario) == OrganizationStatus.SUSPENDED
+    assert await _active_sessions(env, scenario) == 0

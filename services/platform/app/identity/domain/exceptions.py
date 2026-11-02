@@ -139,6 +139,10 @@ class OrganizationNotFoundError(EntityNotFoundError):
 
 
 class OrganizationNotActiveError(BusinessRuleViolationError):
+    """Raised by AuthenticationService when a member of a suspended or
+    deactivated organization tries to log in, refresh a session or complete
+    MFA (HTTP 422, like AccountNotActiveError for a suspended user)."""
+
     def __init__(self, status: str) -> None:
         super().__init__("organization_not_active", f"Organization status '{status}' does not permit this action")
 

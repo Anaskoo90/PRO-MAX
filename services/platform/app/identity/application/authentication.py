@@ -33,6 +33,7 @@ from app.identity.domain.exceptions import (
     InvalidCredentialsError,
     InvalidTokenError,
     OAuthProviderNotConfiguredError,
+    OrganizationNotActiveError,
     OrganizationNotFoundError,
     SessionNotFoundError,
     UserNotFoundError,
@@ -77,6 +78,25 @@ class AuthenticationService:
         self._security_service = security_service
         self._policy = policy
 
+    @staticmethod
+    async def _assert_organization_active(uow, org_id: OrgId, *, lock: bool) -> None:
+        """Members of a suspended/deactivated organization cannot authenticate.
+
+        Fails closed: an organization that can't be found counts as inactive.
+        `lock=True` (login, MFA completion, refresh) takes a shared lock on the
+        organization row BEFORE any user/session row is written, so issuing a
+        session serializes against OrganizationManagementService suspending
+        the organization (which holds FOR UPDATE and then revokes every
+        session): either the session exists by then and is revoked, or this
+        call waits and sees the new status. Organization row first, always.
+        Access-token validation runs on every request and only reads.
+        """
+        org = await (
+            uow.organizations.get_by_id_for_share(org_id) if lock else uow.organizations.get_by_id(org_id)
+        )
+        if org is None or not org.is_active():
+            raise OrganizationNotActiveError(org.status.value if org is not None else "missing")
+
     async def login(
         self,
         *,
@@ -116,6 +136,7 @@ class AuthenticationService:
                 await uow.commit()
                 raise InvalidCredentialsError()
 
+            await self._assert_organization_active(uow, user.org_id, lock=True)
             user.assert_can_authenticate()
 
             if user.mfa_enabled:
@@ -178,6 +199,7 @@ class AuthenticationService:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            await self._assert_organization_active(uow, user.org_id, lock=True)
             user.assert_can_authenticate()
             if user.mfa_enabled:
                 return LoginResult(
@@ -205,6 +227,7 @@ class AuthenticationService:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            await self._assert_organization_active(uow, user.org_id, lock=True)
             user.assert_can_authenticate()
             user.record_successful_login()
             suspicious = await self._is_suspicious(user_id=user.id, ip_address=ip_address)
@@ -273,6 +296,7 @@ class AuthenticationService:
                 raise UserNotFoundError(session.user_id)
             # A suspended/deactivated account must not be able to mint new
             # tokens from a refresh token that predates the status change.
+            await self._assert_organization_active(uow, user.org_id, lock=True)
             user.assert_can_authenticate()
 
             # Refresh-token rotation: the old token is revoked, a new one issued —
@@ -316,9 +340,10 @@ class AuthenticationService:
         Access JWTs remain self-contained for their claims, but their ``sid``
         is checked against the session aggregate so logout, password reset,
         and explicit device revocation take effect immediately instead of
-        waiting for the access-token TTL to elapse. The owning account must
-        also still be active, so a suspended/deactivated user is rejected even
-        if one of their sessions was somehow left unrevoked.
+        waiting for the access-token TTL to elapse. The owning account AND its
+        organization must also still be active, so a suspended/deactivated user
+        or organization is rejected even if a session was somehow left
+        unrevoked.
         """
         async with self._uow_factory() as uow:
             session = await uow.sessions.get_by_id(session_id)
@@ -329,7 +354,10 @@ class AuthenticationService:
             ):
                 return False
             user = await uow.users.get_by_id(user_id)
-            return user is not None and user.status == UserStatus.ACTIVE
+            if user is None or user.status != UserStatus.ACTIVE:
+                return False
+            org = await uow.organizations.get_by_id(user.org_id)
+            return org is not None and org.is_active()
 
     async def list_sessions(self, *, user_id: EntityId, current_session_id: EntityId | None) -> list[SessionDTO]:
         async with self._uow_factory() as uow:

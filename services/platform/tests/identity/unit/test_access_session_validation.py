@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from app.identity.application.authentication import AuthenticationService
 from app.identity.domain.entities import Session, User
+from app.identity.domain.organization import Organization
 from app.identity.domain.value_objects import Email
 from app.identity.presentation.deps import get_current_user_claims
 from app.platform_core.errors.api_exceptions import UnauthorizedError
@@ -81,6 +82,9 @@ async def test_active_session_bound_to_the_claimed_user_is_accepted() -> None:
     user_id = user.id
     session = _session(user_id=user_id)
     uow = FakeUnitOfWork()
+    org = Organization.create(name="Acme", slug="acme", owner_user_id=new_uuid7())
+    org.id = org_id  # the user's organization exists and is ACTIVE
+    await uow.organizations.add(org)
     await uow.users.add(user)
     await uow.sessions.add(session)
 
