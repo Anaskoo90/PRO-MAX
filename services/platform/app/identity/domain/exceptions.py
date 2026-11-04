@@ -111,8 +111,16 @@ class InvalidAvatarError(BusinessRuleViolationError):
 
 
 class SessionNotFoundError(EntityNotFoundError):
-    def __init__(self, session_id: object) -> None:
-        super().__init__("Session", session_id)
+    def __init__(self, session_id: object | None = None) -> None:
+        if session_id is None:
+            # The session was looked up by an opaque credential (a refresh
+            # token). Never echo the credential's lookup hash, or any internal
+            # identifier derived from it, back to the caller or into logs.
+            DomainError.__init__(self, "Session was not found")
+            self.entity_name = "Session"
+            self.entity_id = None
+        else:
+            super().__init__("Session", session_id)
 
 
 class OAuthProviderNotConfiguredError(EntityNotFoundError):
@@ -139,9 +147,13 @@ class OrganizationNotFoundError(EntityNotFoundError):
 
 
 class OrganizationNotActiveError(BusinessRuleViolationError):
-    """Raised by AuthenticationService when a member of a suspended or
-    deactivated organization tries to log in, refresh a session or complete
-    MFA (HTTP 422, like AccountNotActiveError for a suspended user)."""
+    """Raised when a member of a suspended or deactivated organization tries to
+    log in, refresh a session, complete MFA or accept an invitation (and, via
+    the bot-facing contexts' own equivalents, when the Discord bot acts on it).
+    HTTP 403 with the dedicated ORGANIZATION_NOT_ACTIVE error code: it is a
+    refusal about the tenant's state, not a validation problem with the input."""
+
+    code = ErrorCode.ORGANIZATION_NOT_ACTIVE
 
     def __init__(self, status: str) -> None:
         super().__init__("organization_not_active", f"Organization status '{status}' does not permit this action")

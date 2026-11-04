@@ -289,11 +289,12 @@ class AuthenticationService:
         refresh_token_hash = hash_for_lookup(raw_refresh_token, secret_pepper=self._policy.refresh_token_pepper)
         async with self._uow_factory() as uow:
             session = await uow.sessions.get_by_refresh_token_hash(refresh_token_hash)
+            # Generic errors only: no token hash, no user id (see SessionNotFoundError).
             if session is None or not session.is_active():
-                raise SessionNotFoundError(refresh_token_hash)
+                raise SessionNotFoundError()
             user = await uow.users.get_by_id(session.user_id)
             if user is None:
-                raise UserNotFoundError(session.user_id)
+                raise SessionNotFoundError()
             # A suspended/deactivated account must not be able to mint new
             # tokens from a refresh token that predates the status change.
             await self._assert_organization_active(uow, user.org_id, lock=True)
