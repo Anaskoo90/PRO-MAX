@@ -105,8 +105,15 @@ class DenyAllPermissionChecker:
 
 
 class FakeOrganizationLookup:
-    def __init__(self, *, names: dict | None = None) -> None:
+    """Organizations are ACTIVE unless listed in `inactive` (so the existing
+    tests, which never mention organization status, are unaffected)."""
+
+    def __init__(self, *, names: dict | None = None, inactive: set | None = None) -> None:
         self._names = names or {}
+        self.inactive: set = set(inactive or ())
 
     async def get_org_name(self, *, org_id) -> str | None:
         return self._names.get(org_id)
+
+    async def is_org_active(self, *, org_id) -> bool:
+        return org_id not in self.inactive

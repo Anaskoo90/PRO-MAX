@@ -17,6 +17,7 @@ from uuid import UUID
 
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.domain.exceptions import OrganizationNotFoundError
+from app.identity.domain.organization import OrganizationStatus
 
 
 class IdentityOrganizationLookupAdapter:
@@ -29,3 +30,15 @@ class IdentityOrganizationLookupAdapter:
         except OrganizationNotFoundError:
             return None
         return org.name
+
+    async def is_org_active(self, *, org_id: UUID) -> bool:
+        """A plain read of the organization's current status. Missing means
+        not active (fail closed). The read is not locked: the bot runs in its
+        own transactions in other contexts, so it cannot hold Identity's
+        organization row lock; a request already past this check when an
+        organization is suspended may still complete."""
+        try:
+            org = await self._organization_management_service.get(org_id=org_id)
+        except OrganizationNotFoundError:
+            return False
+        return org.status == OrganizationStatus.ACTIVE.value

@@ -22,6 +22,21 @@ class SetupCodeAlreadyUsedError(BusinessRuleViolationError):
         super().__init__("setup_code_already_used", "This setup code was already used")
 
 
+class GuildOrganizationNotActiveError(BusinessRuleViolationError):
+    """The organization behind a guild link / setup code is suspended or
+    deactivated, so the bot may not act for it. HTTP 403 with the dedicated
+    ORGANIZATION_NOT_ACTIVE code. Deliberately generic: Discord users of the
+    guild are not entitled to the tenant's account details."""
+
+    code = ErrorCode.ORGANIZATION_NOT_ACTIVE
+
+    def __init__(self) -> None:
+        super().__init__(
+            "guild_organization_not_active",
+            "The organization linked to this server is suspended or deactivated",
+        )
+
+
 class GuildLinkNotFoundError(EntityNotFoundError):
     def __init__(self, guild_link_id: object) -> None:
         super().__init__("GuildLink", guild_link_id)

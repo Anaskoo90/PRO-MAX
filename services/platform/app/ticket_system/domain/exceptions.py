@@ -34,6 +34,19 @@ class TicketCategoryNotFoundError(EntityNotFoundError):
         super().__init__("TicketCategory", category_id)
 
 
+class TicketOrganizationNotActiveError(BusinessRuleViolationError):
+    """The organization behind the Discord guild is suspended or deactivated,
+    so no ticket operation may run for it (HTTP 403, ORGANIZATION_NOT_ACTIVE)."""
+
+    code = ErrorCode.ORGANIZATION_NOT_ACTIVE
+
+    def __init__(self) -> None:
+        super().__init__(
+            "ticket_organization_not_active",
+            "The organization linked to this server is suspended or deactivated",
+        )
+
+
 class GuildNotLinkedForTicketsError(BusinessRuleViolationError):
     def __init__(self, discord_guild_id: str) -> None:
         super().__init__(
