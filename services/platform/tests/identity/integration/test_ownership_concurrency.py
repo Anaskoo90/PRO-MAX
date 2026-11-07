@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import pytest
 import pytest_asyncio
 from app.identity.application.authentication import AuthenticationService
+from app.identity.application.organization_invitations import OrganizationInvitationService
 from app.identity.application.organization_management import OrganizationManagementService
 from app.identity.application.rbac_management import PermissionCatalogService, RoleService
 from app.identity.application.user_management import UserManagementService
@@ -48,6 +49,7 @@ from app.identity.infrastructure.unit_of_work import IdentityUnitOfWork
 from app.platform_core.errors.domain_exceptions import ConcurrencyConflictError
 from app.platform_core.events.dispatcher import EventDispatcher
 from app.platform_core.logging.audit_logger import AuditLogger
+from app.platform_core.notifications.dispatcher import NotificationDispatcher
 from app.platform_core.security.hashing import PasswordHashingService
 from app.platform_core.security.token import JwtTokenService
 from app.platform_core.shared_kernel.types import OrgId, UserId
@@ -67,12 +69,25 @@ _SETTLE_SECONDS = 0.5  # time given to the second operation to hit the lock (or 
 # --------------------------------------------------------------------------- fixtures
 
 
+class _Mail:
+    def __init__(self) -> None:
+        self.messages = []
+
+    async def send(self, message) -> None:
+        self.messages.append(message)
+
+    def token(self) -> str:
+        body = self.messages[-1].html_body or self.messages[-1].text_body
+        return body.split("token=")[1].split('"')[0].split("<")[0].split()[0]
+
+
 @dataclass
 class _Env:
     make_uow: object
     owner_role_name: str
     org_ids: list = field(default_factory=list)
     role_ids: list = field(default_factory=list)
+    mail: _Mail = field(default_factory=_Mail)
 
     def organizations(self) -> OrganizationManagementService:
         return OrganizationManagementService(
@@ -88,6 +103,15 @@ class _Env:
             dispatcher=EventDispatcher(),
             permission_catalog=PermissionCatalogService(uow_factory=self.make_uow),
             owner_role_name=self.owner_role_name,
+        )
+
+    def invitations(self) -> OrganizationInvitationService:
+        return OrganizationInvitationService(
+            uow_factory=self.make_uow,
+            password_hasher=PasswordHashingService(),
+            notification_dispatcher=NotificationDispatcher(email_provider=self.mail),
+            dispatcher=EventDispatcher(),
+            token_pepper="concurrency-test-token-pepper-0123456789",
         )
 
     def auth(self) -> AuthenticationService:
@@ -525,3 +549,66 @@ async def test_authentication_that_starts_during_a_suspension_is_refused_and_iss
         assert not authentication_ran_ahead, "login must wait for the suspension (shared vs exclusive lock)"
     assert await _org_status(env, scenario) == OrganizationStatus.SUSPENDED
     assert await _active_sessions(env, scenario) == 0
+
+
+# --------------------------------------------------------------------------- invitation acceptance vs suspension
+
+
+async def _pending_invitation(env: _Env, scenario: _Org) -> str:
+    """Owner invites a new address into the (test) owner role; returns the address."""
+    email = f"invitee-{uuid.uuid4().hex[:10]}@example.com"
+    await env.invitations().invite_member(
+        org_id=scenario.org_id, email=email, role_id=scenario.owner_role.id, invited_by_user_id=scenario.owner.id
+    )
+    return email
+
+
+async def _user_exists(env: _Env, scenario: _Org, email: str) -> bool:
+    async with env.make_uow() as uow:
+        return await uow.users.get_by_email(scenario.org_id, email) is not None
+
+
+async def test_an_acceptance_in_flight_makes_suspension_wait_and_the_new_member_is_never_orphaned(
+    env, monkeypatch
+) -> None:
+    """Acceptance holds the organization's shared lock while it writes. Suspension must
+    queue behind it (a serial order: member created, then suspended) rather than run past it."""
+    scenario = await _bootstrap(env)
+    email = await _pending_invitation(env, scenario)
+    gate = _gate_on(monkeypatch, SqlAlchemyUserRepository, "add")  # parks just before the member is written
+
+    outcome, suspension_ran_ahead = await _race_observed(
+        gate,
+        lambda: env.invitations().accept_invitation(raw_token=env.mail.token(), password=_PASSWORD, display_name="New"),
+        lambda: env.organizations().suspend(org_id=scenario.org_id, actor_user_id=scenario.owner.id),
+    )
+    acceptance, suspension = outcome
+
+    assert not isinstance(acceptance, Exception), acceptance
+    assert not isinstance(suspension, Exception), suspension
+    assert not suspension_ran_ahead, "suspension must wait for the in-flight acceptance (shared lock)"
+    assert await _org_status(env, scenario) == OrganizationStatus.SUSPENDED
+    assert await _user_exists(env, scenario, email)  # accepted before the suspension took effect
+
+
+async def test_an_acceptance_that_starts_during_a_suspension_is_refused_and_creates_nothing(
+    env, monkeypatch
+) -> None:
+    scenario = await _bootstrap(env)
+    email = await _pending_invitation(env, scenario)
+    gate = _gate_on(monkeypatch, SqlAlchemySessionRepository, "revoke_all_for_org")  # parks mid-suspension, lock held
+
+    outcome, acceptance_ran_ahead = await _race_observed(
+        gate,
+        lambda: env.organizations().suspend(org_id=scenario.org_id, actor_user_id=scenario.owner.id),
+        lambda: env.invitations().accept_invitation(raw_token=env.mail.token(), password=_PASSWORD, display_name="New"),
+    )
+    suspension, acceptance = outcome
+
+    assert not isinstance(suspension, Exception), suspension
+    assert isinstance(acceptance, OrganizationNotActiveError), acceptance
+    assert not acceptance_ran_ahead, "acceptance must wait for the suspension (shared vs exclusive lock)"
+    assert await _org_status(env, scenario) == OrganizationStatus.SUSPENDED
+    assert not await _user_exists(env, scenario, email), "a member was created inside a suspended organization"
+    async with env.make_uow() as uow:  # and the invitation is still there to be redeemed after reactivation
+        assert len(await uow.organization_invitations.list_pending_for_org(scenario.org_id)) == 1

@@ -22,6 +22,7 @@ from uuid import UUID
 
 from app.identity.application import authority
 from app.identity.application.dtos import UserProfileDTO
+from app.identity.application.organization_status import assert_organization_active
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
 from app.identity.domain.exceptions import (
@@ -256,6 +257,17 @@ class OrganizationInvitationService:
                 raise TokenAlreadyUsedError("organization_invitation")
             if invitation.is_expired():
                 raise TokenExpiredError("organization_invitation")
+
+            # A suspended/deactivated organization cannot take on members: an
+            # invitation issued before the suspension stays pending but cannot
+            # be redeemed until the organization is reactivated. The shared
+            # organization lock is taken BEFORE anything below reads or writes
+            # (same discipline as authentication), so acceptance cannot
+            # interleave with the suspension: either the new member is
+            # committed before the status change gets its lock, or this waits
+            # and is refused. Nothing is created on refusal (the transaction
+            # rolls back) and the invitation is left untouched.
+            await assert_organization_active(uow, OrgId(invitation.org_id), lock=True)
 
             # The invitation may have been issued days ago. Authority is
             # re-validated at redemption: the inviter must still be an ACTIVE

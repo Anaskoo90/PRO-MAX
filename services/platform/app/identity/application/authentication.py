@@ -19,6 +19,7 @@ from datetime import timedelta
 import jwt
 
 from app.identity.application.dtos import AuthTokens, LoginResult, SessionDTO
+from app.identity.application.organization_status import assert_organization_active
 from app.identity.application.ports import IdentityUnitOfWorkPort, OAuth2ClientPort
 from app.identity.application.security import SecurityService
 from app.identity.domain.entities import Session, User, UserStatus
@@ -33,7 +34,6 @@ from app.identity.domain.exceptions import (
     InvalidCredentialsError,
     InvalidTokenError,
     OAuthProviderNotConfiguredError,
-    OrganizationNotActiveError,
     OrganizationNotFoundError,
     SessionNotFoundError,
     UserNotFoundError,
@@ -80,22 +80,10 @@ class AuthenticationService:
 
     @staticmethod
     async def _assert_organization_active(uow, org_id: OrgId, *, lock: bool) -> None:
-        """Members of a suspended/deactivated organization cannot authenticate.
-
-        Fails closed: an organization that can't be found counts as inactive.
-        `lock=True` (login, MFA completion, refresh) takes a shared lock on the
-        organization row BEFORE any user/session row is written, so issuing a
-        session serializes against OrganizationManagementService suspending
-        the organization (which holds FOR UPDATE and then revokes every
-        session): either the session exists by then and is revoked, or this
-        call waits and sees the new status. Organization row first, always.
-        Access-token validation runs on every request and only reads.
-        """
-        org = await (
-            uow.organizations.get_by_id_for_share(org_id) if lock else uow.organizations.get_by_id(org_id)
-        )
-        if org is None or not org.is_active():
-            raise OrganizationNotActiveError(org.status.value if org is not None else "missing")
+        """Members of a suspended/deactivated organization cannot authenticate
+        (see organization_status.assert_organization_active for the rule and
+        the locking discipline)."""
+        await assert_organization_active(uow, org_id, lock=lock)
 
     async def login(
         self,
