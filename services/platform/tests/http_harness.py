@@ -15,6 +15,11 @@ Notes for writing tests with it
 - Each test gets its own client IP, so the per-IP login rate limiter (Redis)
   never leaks between tests or runs.
 - The lifespan is not run (it needs RabbitMQ); no test here depends on it.
+- The app's real dependency wiring (`app.dependency_overrides`, installed once
+  at import) is restored around every test. Some older API tests install a stub
+  and then `pop` the key in their `finally`, which also deletes the app's real
+  override for it for the rest of the session; without this, a later test that
+  goes through the real app would hit "dependency not wired".
 """
 
 from __future__ import annotations
@@ -37,9 +42,18 @@ from app.platform_core.shared_kernel.utils import new_uuid7
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+# Taken at import time, i.e. during collection, before any test has run.
+_PRISTINE_WIRING = dict(app.dependency_overrides)
+
 API = "/api/v1"
 PASSWORD = "Correct-Horse-Battery-9"
 _SCHEMAS_EXCLUDED = ("pg_catalog", "information_schema")
+
+
+def restore_app_wiring() -> None:
+    """Put the app's real dependency overrides back exactly as composition installed them."""
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(_PRISTINE_WIRING)
 
 
 @dataclass
@@ -169,8 +183,12 @@ async def http_env():
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     client_ip = f"10.{random.randint(1, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
     transport = httpx.ASGITransport(app=app, client=(client_ip, 5555))
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        harness = HttpHarness(client=client, make_uow=lambda: IdentityUnitOfWork(session_factory))
-        yield harness
-    await _cleanup(engine, harness.org_ids)
-    await engine.dispose()
+    restore_app_wiring()
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            harness = HttpHarness(client=client, make_uow=lambda: IdentityUnitOfWork(session_factory))
+            yield harness
+        await _cleanup(engine, harness.org_ids)
+    finally:
+        restore_app_wiring()
+        await engine.dispose()
