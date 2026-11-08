@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from app.platform_core.errors.domain_exceptions import (
     BusinessRuleViolationError,
+    DomainError,
     EntityNotFoundError,
 )
 from app.platform_core.shared_kernel.error_codes import ErrorCode
@@ -110,8 +111,16 @@ class InvalidAvatarError(BusinessRuleViolationError):
 
 
 class SessionNotFoundError(EntityNotFoundError):
-    def __init__(self, session_id: object) -> None:
-        super().__init__("Session", session_id)
+    def __init__(self, session_id: object | None = None) -> None:
+        if session_id is None:
+            # The session was looked up by an opaque credential (a refresh
+            # token). Never echo the credential's lookup hash, or any internal
+            # identifier derived from it, back to the caller or into logs.
+            DomainError.__init__(self, "Session was not found")
+            self.entity_name = "Session"
+            self.entity_id = None
+        else:
+            super().__init__("Session", session_id)
 
 
 class OAuthProviderNotConfiguredError(EntityNotFoundError):
@@ -138,6 +147,14 @@ class OrganizationNotFoundError(EntityNotFoundError):
 
 
 class OrganizationNotActiveError(BusinessRuleViolationError):
+    """Raised when a member of a suspended or deactivated organization tries to
+    log in, refresh a session, complete MFA or accept an invitation (and, via
+    the bot-facing contexts' own equivalents, when the Discord bot acts on it).
+    HTTP 403 with the dedicated ORGANIZATION_NOT_ACTIVE error code: it is a
+    refusal about the tenant's state, not a validation problem with the input."""
+
+    code = ErrorCode.ORGANIZATION_NOT_ACTIVE
+
     def __init__(self, status: str) -> None:
         super().__init__("organization_not_active", f"Organization status '{status}' does not permit this action")
 
@@ -176,6 +193,66 @@ class RoleNotFoundError(EntityNotFoundError):
         super().__init__("Role", role_id)
 
 
+class RoleInUseError(BusinessRuleViolationError):
+    """A role cannot be deleted while other records (currently: organization
+    invitations) still reference it. Mapped to HTTP 409."""
+
+    code = ErrorCode.CONFLICT
+
+    def __init__(self, role_id: object) -> None:
+        super().__init__(
+            "role_in_use",
+            "Role is still referenced by one or more invitations and cannot be deleted",
+        )
+        self.role_id = role_id
+
+
+class InvitationNoLongerValidError(BusinessRuleViolationError):
+    """The invitation can no longer be redeemed because the inviter is no
+    longer active or no longer authorized to grant the invited role. The
+    message is deliberately generic: the invitee is not entitled to details
+    about the inviter's account or the organization's role configuration."""
+
+    def __init__(self) -> None:
+        super().__init__("invitation_no_longer_valid", "This invitation can no longer be accepted")
+
+
+class NotOrganizationOwnerError(BusinessRuleViolationError):
+    """Only the organization's designated owner may hand ownership over;
+    holding the org_owner role alone (e.g. as a co-owner or a former owner)
+    is not enough."""
+
+    code = ErrorCode.FORBIDDEN
+
+    def __init__(self) -> None:
+        super().__init__(
+            "not_organization_owner", "Only the organization owner can transfer ownership"
+        )
+
+
+class InvalidOwnershipTransferTargetError(BusinessRuleViolationError):
+    def __init__(self, reason: str) -> None:
+        messages = {
+            "not_active": "The new owner must be an active member of the organization",
+            "already_owner": "That user already owns the organization",
+        }
+        super().__init__("invalid_ownership_transfer_target", messages[reason])
+        self.reason = reason
+
+
+class OwnerRoleNotConfiguredError(DomainError):
+    """The seeded owner system role is missing. This is a deployment/seed
+    problem, not a client error, so it maps to HTTP 500 and is logged with a
+    traceback; operations that would leave an owner without the role refuse to
+    run instead of silently continuing."""
+
+    code = ErrorCode.INTERNAL_ERROR
+
+    def __init__(self, role_name: str) -> None:
+        super().__init__(f"Organization owner role '{role_name}' is not configured")
+        self.role_name = role_name
+
+
 class RoleAlreadyExistsError(BusinessRuleViolationError):
     def __init__(self, name: str) -> None:
         super().__init__("role_already_exists", f"A role named '{name}' already exists")
@@ -209,6 +286,32 @@ class InsufficientPermissionError(BusinessRuleViolationError):
     def __init__(self, resource: str, action: str) -> None:
         super().__init__("insufficient_permission", f"Missing permission '{resource}:{action}'")
         self.resource = resource
+        self.action = action
+
+
+class InsufficientAuthorityError(BusinessRuleViolationError):
+    """Raised when an actor tries to hand out authority they do not hold
+    themselves (assigning a role, granting a permission, or inheriting a
+    parent role whose permissions exceed their own)."""
+
+    code = ErrorCode.FORBIDDEN
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            "insufficient_authority", f"Cannot {action} beyond your own permissions"
+        )
+        self.action = action
+
+
+class OrganizationOwnerProtectedError(BusinessRuleViolationError):
+    """Raised when an operation would remove or demote the organization's
+    designated owner; ownership must be transferred first."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            "organization_owner_protected",
+            f"Cannot {action} the organization owner; transfer ownership first",
+        )
         self.action = action
 
 

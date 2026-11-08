@@ -13,11 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.identity.application import authority
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
 from app.identity.domain.exceptions import (
+    OrganizationOwnerProtectedError,
     PermissionNotFoundError,
     RoleAlreadyExistsError,
     RoleHierarchyCycleError,
+    RoleInUseError,
     RoleNotFoundError,
     UserNotFoundError,
 )
@@ -74,11 +77,25 @@ class PermissionCatalogService:
             raise PermissionNotFoundError(permission_id)
 
 
+# Name of the seeded system role (seed_data.py) that carries organization
+# ownership; the organization's designated owner must always hold it.
+_OWNER_ROLE_NAME = "org_owner"
+
+
 class RoleService:
-    def __init__(self, *, uow_factory, dispatcher: EventDispatcher, permission_catalog: PermissionCatalogService) -> None:
+    def __init__(
+        self,
+        *,
+        uow_factory,
+        dispatcher: EventDispatcher,
+        permission_catalog: PermissionCatalogService,
+        owner_role_name: str = _OWNER_ROLE_NAME,
+    ) -> None:
         self._uow_factory = uow_factory
         self._dispatcher = dispatcher
         self._permission_catalog = permission_catalog
+        # Mirrors OrganizationManagementService's owner_system_role_name.
+        self._owner_role_name = owner_role_name
 
     async def create_custom_role(
         self, *, org_id: OrgId, name: str, description: str = "", actor_user_id: UUID
@@ -142,6 +159,7 @@ class RoleService:
             if parent_role_id is not None:
                 cursor: EntityId | None = parent_role_id
                 visited: set[EntityId] = set()
+                inherited_permission_ids: set[EntityId] = set()
                 while cursor is not None:
                     if cursor == role_id:
                         raise RoleHierarchyCycleError()
@@ -153,7 +171,14 @@ class RoleService:
                         ancestor.org_id is not None and ancestor.org_id != org_id
                     ):
                         raise RoleNotFoundError(cursor)
+                    inherited_permission_ids |= ancestor.permission_ids
                     cursor = ancestor.parent_role_id
+                # Inheriting a parent hands this role (and its holders) every
+                # permission up the chain, so the actor must hold them all.
+                await self._assert_actor_holds(
+                    uow, actor_user_id=actor_user_id, org_id=org_id,
+                    required=inherited_permission_ids, action="set a parent role",
+                )
             role.set_parent(parent_role_id)
             await uow.roles.update(role)
             events = role.pull_domain_events()
@@ -184,6 +209,11 @@ class RoleService:
             role = await self._get_mutable_role_for_org(
                 uow, role_id=role_id, org_id=org_id
             )
+            # organization_invitations.role_id is a hard FK, so deleting a role
+            # an invitation still points at would surface as a raw database
+            # IntegrityError (HTTP 500). Report it as the conflict it is.
+            if await uow.organization_invitations.exists_for_role(role_id):
+                raise RoleInUseError(role_id)
             role.mark_deleted()
             events = role.pull_domain_events()
             await uow.roles.delete(role_id)
@@ -210,6 +240,10 @@ class RoleService:
                 uow, role_id=role_id, org_id=org_id
             )
             await self._permission_catalog.validate_exists(uow, permission_id=permission_id)
+            await self._assert_actor_holds(
+                uow, actor_user_id=actor_user_id, org_id=org_id,
+                required={permission_id}, action="grant a permission",
+            )
             role.grant_permission(permission_id)
             await uow.roles.update(role)
             events = role.pull_domain_events()
@@ -271,6 +305,15 @@ class RoleService:
             if user is None or user.org_id != org_id:
                 raise UserNotFoundError(user_id)
 
+            # No handing out authority the actor doesn't hold themselves —
+            # this is also what keeps org_admin (which lacks
+            # organization:manage_ownership) from assigning org_owner.
+            await self._assert_actor_holds(
+                uow, actor_user_id=actor_user_id, org_id=org_id,
+                required=await self._effective_permission_ids(uow, role),
+                action="assign a role",
+            )
+
             if await uow.user_role_assignments.get(user_id, role_id) is not None:
                 return
             assignment = UserRoleAssignment.create(
@@ -293,9 +336,29 @@ class RoleService:
 
     async def revoke_role_from_user(self, *, user_id: UserId, role_id: EntityId, org_id: OrgId, actor_user_id: UUID) -> None:
         async with self._uow_factory() as uow:
+            role = await uow.roles.get_by_id(role_id)
+            is_owner_role = role is not None and role.is_system_role and role.name == self._owner_role_name
+            org = None
+            if is_owner_role:
+                # Organization row first (same lock order as ownership
+                # transfer / suspension): the "is this the designated owner?"
+                # check below must not race a transfer that makes this user
+                # the owner, which would leave the owner without the role.
+                org = await uow.organizations.get_by_id_for_update(org_id)
             assignment = await uow.user_role_assignments.get(user_id, role_id)
             if assignment is None or assignment.org_id != org_id:
                 return
+            if role is not None:
+                # The designated owner can't be demoted until ownership has
+                # been transferred through the dedicated flow.
+                if is_owner_role and org is not None and org.owner_user_id == user_id:
+                    raise OrganizationOwnerProtectedError("remove the owner role from")
+                # Likewise you can't strip a role you couldn't have assigned.
+                await self._assert_actor_holds(
+                    uow, actor_user_id=actor_user_id, org_id=org_id,
+                    required=await self._effective_permission_ids(uow, role),
+                    action="revoke a role",
+                )
             await uow.user_role_assignments.delete(assignment.id)
             await uow.audit_logs.add(
                 AuditLogRecord.create(
@@ -326,6 +389,17 @@ class RoleService:
             assignments = await uow.user_role_assignments.list_for_user(user_id, org_id)
             roles = [await uow.roles.get_by_id(a.role_id) for a in assignments]
             return [_role_to_dto(r) for r in roles if r is not None]
+
+    @staticmethod
+    async def _effective_permission_ids(uow, role: Role) -> set[EntityId]:
+        return await authority.effective_permission_ids(uow, role)
+
+    async def _assert_actor_holds(
+        self, uow, *, actor_user_id: UUID, org_id: OrgId, required: set[EntityId], action: str
+    ) -> None:
+        await authority.assert_actor_holds(
+            uow, actor_user_id=actor_user_id, org_id=org_id, required=required, action=action
+        )
 
     @staticmethod
     async def _get_mutable_role_for_org(

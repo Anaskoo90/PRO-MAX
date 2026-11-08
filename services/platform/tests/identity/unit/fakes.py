@@ -59,8 +59,21 @@ class FakeUserRepository:
 class FakeOrganizationRepository:
     def __init__(self) -> None:
         self.organizations: dict[EntityId, Organization] = {}
+        # org ids passed to get_by_id_for_update, in call order — lets unit
+        # tests assert which operations take the organization row lock.
+        self.locked_org_ids: list[EntityId] = []
+        # ...and to get_by_id_for_share (authentication's shared lock).
+        self.shared_org_ids: list[EntityId] = []
 
     async def get_by_id(self, org_id: EntityId) -> Organization | None:
+        return self.organizations.get(org_id)
+
+    async def get_by_id_for_update(self, org_id: EntityId) -> Organization | None:
+        self.locked_org_ids.append(org_id)
+        return self.organizations.get(org_id)
+
+    async def get_by_id_for_share(self, org_id: EntityId) -> Organization | None:
+        self.shared_org_ids.append(org_id)
         return self.organizations.get(org_id)
 
     async def get_by_slug(self, slug: str) -> Organization | None:
@@ -76,6 +89,9 @@ class FakeOrganizationRepository:
 class FakeSessionRepository:
     def __init__(self) -> None:
         self.sessions: dict[EntityId, Session] = {}
+        # set by FakeUnitOfWork: user id -> that user's org id (the real
+        # repository joins on the users table)
+        self.org_of_user = lambda _user_id: None
 
     async def get_by_id(self, session_id: EntityId) -> Session | None:
         return self.sessions.get(session_id)
@@ -85,6 +101,14 @@ class FakeSessionRepository:
 
     async def list_active_for_user(self, user_id: EntityId) -> list[Session]:
         return [s for s in self.sessions.values() if s.user_id == user_id and s.is_active()]
+
+    async def revoke_all_for_org(self, org_id: EntityId) -> int:
+        revoked = 0
+        for session in self.sessions.values():
+            if session.is_active() and self.org_of_user(session.user_id) == org_id:
+                session.revoke()
+                revoked += 1
+        return revoked
 
     async def add(self, session: Session) -> None:
         self.sessions[session.id] = session
@@ -183,6 +207,17 @@ class FakeOutboxWriter:
         self.events.append(event)
 
 
+class FakeOrganizationInvitationRepository:
+    """Only what RoleService needs (role-in-use check); invitation flows are
+    covered end-to-end against the real database."""
+
+    def __init__(self) -> None:
+        self.referenced_role_ids: set[EntityId] = set()
+
+    async def exists_for_role(self, role_id: EntityId) -> bool:
+        return role_id in self.referenced_role_ids
+
+
 class FakeUnitOfWork:
     """Satisfies IdentityUnitOfWorkPort for the repositories a given test
     actually exercises; unused attributes are left None deliberately, so a
@@ -196,10 +231,14 @@ class FakeUnitOfWork:
         self.users = users or FakeUserRepository()
         self.organizations = organizations or FakeOrganizationRepository()
         self.sessions = sessions or FakeSessionRepository()
+        self.sessions.org_of_user = lambda user_id: (
+            u.org_id if (u := self.users.users.get(user_id)) is not None else None
+        )
         self.roles = roles or FakeRoleRepository()
         self.permissions = permissions or FakePermissionRepository()
         self.user_role_assignments = user_role_assignments or FakeUserRoleAssignmentRepository()
         self.audit_logs = audit_logs or FakeAuditLogRepository()
+        self.organization_invitations = FakeOrganizationInvitationRepository()
         self.outbox = FakeOutboxWriter()
 
     async def flush(self) -> None:

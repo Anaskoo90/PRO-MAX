@@ -20,12 +20,16 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+from app.identity.application import authority
 from app.identity.application.dtos import UserProfileDTO
+from app.identity.application.organization_status import assert_organization_active
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
-from app.identity.domain.entities import PasswordHistoryEntry, User
+from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
 from app.identity.domain.exceptions import (
     EmailAlreadyRegisteredError,
+    InsufficientAuthorityError,
     InvalidTokenError,
+    InvitationNoLongerValidError,
     InvitationNotFoundError,
     OrganizationNotFoundError,
     RoleNotFoundError,
@@ -112,6 +116,19 @@ class OrganizationInvitationService:
             role = await uow.roles.get_by_id(role_id)
             if role is None or (role.org_id is not None and role.org_id != org_id):
                 raise RoleNotFoundError(role_id)
+
+            # An invitation is a deferred role assignment, so it is subject to
+            # the same rule as RoleService.assign_role_to_user: you cannot
+            # invite someone into a role carrying permissions you don't hold
+            # (e.g. org_admin inviting an attacker-controlled address as
+            # org_owner).
+            await authority.assert_actor_holds(
+                uow,
+                actor_user_id=invited_by_user_id,
+                org_id=org_id,
+                required=await authority.effective_permission_ids(uow, role),
+                action="invite a member with this role",
+            )
 
             if await uow.users.get_by_email(org_id, str(normalized_email)) is not None:
                 raise EmailAlreadyRegisteredError(str(normalized_email))
@@ -241,6 +258,25 @@ class OrganizationInvitationService:
             if invitation.is_expired():
                 raise TokenExpiredError("organization_invitation")
 
+            # A suspended/deactivated organization cannot take on members: an
+            # invitation issued before the suspension stays pending but cannot
+            # be redeemed until the organization is reactivated. The shared
+            # organization lock is taken BEFORE anything below reads or writes
+            # (same discipline as authentication), so acceptance cannot
+            # interleave with the suspension: either the new member is
+            # committed before the status change gets its lock, or this waits
+            # and is refused. Nothing is created on refusal (the transaction
+            # rolls back) and the invitation is left untouched.
+            await assert_organization_active(uow, OrgId(invitation.org_id), lock=True)
+
+            # The invitation may have been issued days ago. Authority is
+            # re-validated at redemption: the inviter must still be an ACTIVE
+            # member of the organization and still be allowed to grant the
+            # invited role (they may since have been suspended, deactivated
+            # or demoted, or the role may have gained permissions). The
+            # invitation is left untouched on failure.
+            await self._assert_inviter_still_authorized(uow, invitation)
+
             # Re-checked at acceptance time, not just at invite time: the
             # window between the two could be days (invitation_ttl), long
             # enough for the invitee to have registered another way since.
@@ -301,3 +337,26 @@ class OrganizationInvitationService:
                 avatar_storage_key=user.avatar_storage_key,
                 preferences=user.preferences,
             )
+
+    @staticmethod
+    async def _assert_inviter_still_authorized(uow, invitation: OrganizationInvitation) -> None:
+        inviter = await uow.users.get_by_id(invitation.invited_by_user_id)
+        if (
+            inviter is None
+            or inviter.org_id != invitation.org_id
+            or inviter.status != UserStatus.ACTIVE
+        ):
+            raise InvitationNoLongerValidError()
+        role = await uow.roles.get_by_id(invitation.role_id)
+        if role is None or (role.org_id is not None and role.org_id != invitation.org_id):
+            raise InvitationNoLongerValidError()
+        try:
+            await authority.assert_actor_holds(
+                uow,
+                actor_user_id=inviter.id,
+                org_id=invitation.org_id,
+                required=await authority.effective_permission_ids(uow, role),
+                action="grant the invited role",
+            )
+        except InsufficientAuthorityError:
+            raise InvitationNoLongerValidError() from None

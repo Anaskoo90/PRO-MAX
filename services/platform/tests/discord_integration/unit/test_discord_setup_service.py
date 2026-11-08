@@ -6,6 +6,7 @@ from app.discord_integration.domain.exceptions import (
     GuildAlreadyLinkedToAnotherOrganizationError,
     GuildLinkNotFoundError,
     GuildNotLinkedError,
+    GuildOrganizationNotActiveError,
     InsufficientDiscordPermissionError,
     InvalidSetupCodeError,
     SetupCodeAlreadyUsedError,
@@ -320,3 +321,97 @@ async def test_resolve_org_id_returns_none_for_a_revoked_link(context) -> None:
     await service.unlink_guild(org_id=org_id, guild_link_id=link.id, actor_user_id=actor_id)
 
     assert await service.resolve_org_id_by_discord_guild_id(discord_guild_id="111") is None
+
+
+# --- bot operations must stop while the organization is suspended/deactivated ---------
+
+
+async def _link_guild(service, org_id, actor_id, guild_id: str = "111") -> str:
+    token = await service.request_setup_token(org_id=org_id, requested_by_user_id=actor_id)
+    await service.complete_setup(
+        raw_code=token.raw_code, discord_guild_id=guild_id, discord_guild_name="Guild", discord_user_id="u1"
+    )
+    return token.raw_code
+
+
+async def test_resolve_org_id_is_refused_for_an_inactive_organization_and_resumes_on_reactivation(context) -> None:
+    uow, org_id, actor_id = context
+    lookup = FakeOrganizationLookup()
+    service = _make_service(uow, organization_lookup=lookup)
+    await _link_guild(service, org_id, actor_id)
+
+    lookup.inactive.add(org_id)
+    with pytest.raises(GuildOrganizationNotActiveError):
+        await service.resolve_org_id_by_discord_guild_id(discord_guild_id="111")
+
+    lookup.inactive.discard(org_id)
+    assert await service.resolve_org_id_by_discord_guild_id(discord_guild_id="111") == org_id
+
+
+async def test_resolve_org_id_for_an_unlinked_guild_is_still_none_not_an_error(context) -> None:
+    uow, _org_id, _actor_id = context
+    lookup = FakeOrganizationLookup(inactive={"anything"})
+
+    assert await _make_service(uow, organization_lookup=lookup).resolve_org_id_by_discord_guild_id(
+        discord_guild_id="never-linked"
+    ) is None
+
+
+async def test_status_is_refused_for_an_inactive_organization(context) -> None:
+    uow, org_id, actor_id = context
+    lookup = FakeOrganizationLookup(names={org_id: "Acme"})
+    service = _make_service(uow, organization_lookup=lookup)
+    await _link_guild(service, org_id, actor_id)
+    assert (await service.get_status_by_discord_guild_id(discord_guild_id="111")).linked is True
+
+    lookup.inactive.add(org_id)
+    with pytest.raises(GuildOrganizationNotActiveError):
+        await service.get_status_by_discord_guild_id(discord_guild_id="111")
+
+
+async def test_setup_with_a_previously_issued_code_is_refused_without_side_effects(context) -> None:
+    uow, org_id, actor_id = context
+    lookup = FakeOrganizationLookup()
+    service = _make_service(uow, organization_lookup=lookup)
+    token = await service.request_setup_token(org_id=org_id, requested_by_user_id=actor_id)
+    lookup.inactive.add(org_id)  # suspended AFTER the code was issued
+
+    with pytest.raises(GuildOrganizationNotActiveError):
+        await service.complete_setup(
+            raw_code=token.raw_code, discord_guild_id="222", discord_guild_name="G", discord_user_id="u"
+        )
+
+    assert uow.guild_links.links == {}  # nothing linked
+    assert all(not t.is_consumed() for t in uow.guild_setup_tokens.tokens.values())  # code not burned
+    lookup.inactive.discard(org_id)  # reactivated: the same code works
+    link = await service.complete_setup(
+        raw_code=token.raw_code, discord_guild_id="222", discord_guild_name="G", discord_user_id="u"
+    )
+    assert link.org_id == org_id
+
+
+async def test_unlinking_by_the_guild_admin_stays_possible_for_an_inactive_organization(context) -> None:
+    uow, org_id, actor_id = context
+    lookup = FakeOrganizationLookup()
+    service = _make_service(uow, organization_lookup=lookup)
+    await _link_guild(service, org_id, actor_id)
+    lookup.inactive.add(org_id)
+
+    await service.unlink_guild_by_discord_id(discord_guild_id="111", discord_user_id="u1")
+
+    assert await service.resolve_org_id_by_discord_guild_id(discord_guild_id="111") is None
+
+
+async def test_one_inactive_organization_does_not_affect_another_tenants_guild(context) -> None:
+    uow, org_a, actor_id = context
+    org_b = OrgId(new_uuid7())
+    lookup = FakeOrganizationLookup()
+    service = _make_service(uow, organization_lookup=lookup)
+    await _link_guild(service, org_a, actor_id, "guild-a")
+    await _link_guild(service, org_b, actor_id, "guild-b")
+
+    lookup.inactive.add(org_a)
+
+    with pytest.raises(GuildOrganizationNotActiveError):
+        await service.resolve_org_id_by_discord_guild_id(discord_guild_id="guild-a")
+    assert await service.resolve_org_id_by_discord_guild_id(discord_guild_id="guild-b") == org_b

@@ -35,6 +35,16 @@ class SqlAlchemyOrganizationInvitationRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return mappers.organization_invitation_to_domain(row) if row else None
 
+    async def exists_for_role(self, role_id: EntityId) -> bool:
+        """True if any invitation (whatever its status) references the role —
+        the FK on organization_invitations.role_id is unconditional."""
+        stmt = (
+            select(OrganizationInvitationOrmModel.id)
+            .where(OrganizationInvitationOrmModel.role_id == role_id)
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).first() is not None
+
     async def list_pending_for_org(
         self, org_id: OrgId, *, offset: int = 0, limit: int = 50
     ) -> list[OrganizationInvitation]:

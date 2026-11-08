@@ -33,6 +33,7 @@ from app.discord_integration.domain.exceptions import (
     GuildAlreadyLinkedToAnotherOrganizationError,
     GuildLinkNotFoundError,
     GuildNotLinkedError,
+    GuildOrganizationNotActiveError,
     InvalidSetupCodeError,
     SetupCodeAlreadyUsedError,
     SetupCodeExpiredError,
@@ -92,6 +93,14 @@ class DiscordSetupService:
             f"&permissions={_BOT_INVITE_PERMISSIONS}"
         )
 
+    async def _assert_org_active(self, org_id: OrgId) -> None:
+        """Bot-facing operations act for the organization behind a guild link
+        (or a setup code); they must stop while it is suspended/deactivated,
+        and resume on reactivation. Fails closed if the status can't be
+        established (see OrganizationLookupPort.is_org_active)."""
+        if not await self._organization_lookup.is_org_active(org_id=org_id):
+            raise GuildOrganizationNotActiveError()
+
     async def request_setup_token(self, *, org_id: OrgId, requested_by_user_id: UserId) -> SetupTokenDTO:
         await self._authorization.assert_can_manage_integration(org_id=org_id, user_id=requested_by_user_id)
 
@@ -132,6 +141,10 @@ class DiscordSetupService:
                 raise SetupCodeAlreadyUsedError()
             if token.is_expired():
                 raise SetupCodeExpiredError()
+            # A code issued before the organization was suspended must not
+            # link a (new) guild to it. Nothing is written and the code is not
+            # consumed, so it works again if the organization is reactivated.
+            await self._assert_org_active(OrgId(token.org_id))
 
             existing = await uow.guild_links.get_by_discord_guild_id(discord_guild_id)
             if existing is not None and existing.is_active() and existing.org_id != token.org_id:
@@ -195,6 +208,10 @@ class DiscordSetupService:
             await self._dispatcher.dispatch_all(events)
 
     async def unlink_guild_by_discord_id(self, *, discord_guild_id: str, discord_user_id: str) -> None:
+        # Intentionally NOT gated on the organization's status: revoking a link
+        # only reduces what the organization can reach, and it is the guild
+        # admin's way out of a tenant that was suspended (an active link to
+        # another organization otherwise blocks re-linking the server).
         async with self._uow_factory() as uow:
             link = await uow.guild_links.get_active_by_discord_guild_id(discord_guild_id)
             if link is None:
@@ -218,18 +235,28 @@ class DiscordSetupService:
     async def resolve_org_id_by_discord_guild_id(self, *, discord_guild_id: str) -> OrgId | None:
         """Public resolution primitive for other bounded contexts' ACLs
         (Ticket System is the first consumer) — returns the org_id an
-        ACTIVE GuildLink resolves to, or None if unlinked/revoked.
+        ACTIVE GuildLink resolves to, or None if unlinked/revoked; raises
+        GuildOrganizationNotActiveError if that organization is not ACTIVE.
         GuildLinkStatusDTO is display-shaped (org name, not org id) and
         unsuitable for this; nothing about that DTO changes."""
         async with self._uow_factory() as uow:
             link = await uow.guild_links.get_active_by_discord_guild_id(discord_guild_id)
-        return link.org_id if link is not None else None
+        if link is None:
+            return None
+        # THE chokepoint: the Ticket System's ACL calls this for every bot
+        # operation (ticket create/lookup/claim/unclaim/transfer/close,
+        # messages, attachments, categories), including the ticket-by-id ones
+        # via their guild-ownership guards. A suspended/deactivated
+        # organization is refused here, once, for all of them.
+        await self._assert_org_active(OrgId(link.org_id))
+        return link.org_id
 
     async def get_status_by_discord_guild_id(self, *, discord_guild_id: str) -> GuildLinkStatusDTO:
         async with self._uow_factory() as uow:
             link = await uow.guild_links.get_active_by_discord_guild_id(discord_guild_id)
         if link is None:
             return GuildLinkStatusDTO(linked=False)
+        await self._assert_org_active(OrgId(link.org_id))
         org_name = await self._organization_lookup.get_org_name(org_id=link.org_id)
         return GuildLinkStatusDTO(
             linked=True, org_name=org_name, discord_guild_name=link.discord_guild_name, linked_at=link.linked_at

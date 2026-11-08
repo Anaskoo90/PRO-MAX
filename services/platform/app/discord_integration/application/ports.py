@@ -48,3 +48,7 @@ class OrgPermissionCheckerPort(Protocol):
 
 class OrganizationLookupPort(Protocol):
     async def get_org_name(self, *, org_id: UUID) -> str | None: ...
+
+    async def is_org_active(self, *, org_id: UUID) -> bool:
+        """True only for an existing ACTIVE organization (fails closed)."""
+        ...

@@ -21,10 +21,13 @@ from uuid import UUID
 
 from app.identity.application.dtos import UserProfileDTO, user_to_profile_dto
 from app.identity.domain.audit import AuditEventCategory, AuditLogRecord
-from app.identity.domain.entities import PasswordHistoryEntry, User
+from app.identity.domain.entities import PasswordHistoryEntry, User, UserStatus
 from app.identity.domain.exceptions import (
+    InvalidOwnershipTransferTargetError,
+    NotOrganizationOwnerError,
     OrganizationNotFoundError,
     OrganizationSlugTakenError,
+    OwnerRoleNotConfiguredError,
     UserNotFoundError,
     WeakPasswordError,
 )
@@ -87,26 +90,26 @@ class OrganizationManagementService:
             if await uow.organizations.get_by_slug(slug) is not None:
                 raise OrganizationSlugTakenError(slug)
 
+            # Fail safely before anything is created: an organization whose
+            # owner never receives the owner role is permanently unmanageable
+            # (nobody could ever hold organization:manage_ownership), so a
+            # missing/unseeded owner role aborts the whole registration.
+            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
+            if owner_role is None:
+                raise OwnerRoleNotConfiguredError(self._owner_system_role_name)
+
+            # The organization records its owner's id at creation, so the id
+            # is chosen first and handed to User.register — the owner's real
+            # id is therefore correct from the start, including in the
+            # OrganizationCreated event (no placeholder, no later fix-up).
             owner_user_id = UserId(new_uuid7())
             org = Organization.create(name=org_name, slug=slug, owner_user_id=owner_user_id)
 
             password_hash = self._password_hasher.hash(owner_password)
             owner = User.register(
                 org_id=OrgId(org.id), email=Email(owner_email), password_hash=password_hash,
-                display_name=owner_display_name,
+                display_name=owner_display_name, user_id=owner_user_id,
             )
-            # User.register() generates its own id (required so it can record
-            # UserRegistered correctly) which will not match the placeholder
-            # owner_user_id used above to construct `org` — Organization.create()
-            # and User.register() each require the other's id up front, a
-            # genuine circular dependency, so one placeholder is unavoidable.
-            # Point the org at the real user id before anything is persisted.
-            # This is a plain attribute fix-up for the still-in-progress
-            # creation, not an ownership change, so it intentionally does not
-            # go through transfer_ownership() (which would record a
-            # misleading "ownership transferred" event for something that
-            # never had a different real owner).
-            org.owner_user_id = owner.id
 
             # Flushed between each dependent add: org/user/password_history/
             # user_role_assignments have real FK chains (users.org_id ->
@@ -120,11 +123,9 @@ class OrganizationManagementService:
             await uow.flush()
             await uow.password_history.add(PasswordHistoryEntry.create(user_id=owner.id, password_hash=password_hash))
 
-            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
-            if owner_role is not None:
-                await uow.user_role_assignments.add(
-                    UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
-                )
+            await uow.user_role_assignments.add(
+                UserRoleAssignment.create(user_id=owner.id, role_id=owner_role.id, org_id=OrgId(org.id))
+            )
 
             events = org.pull_domain_events() + owner.pull_domain_events()
             await uow.audit_logs.add(
@@ -212,27 +213,55 @@ class OrganizationManagementService:
 
     async def transfer_ownership(self, *, org_id: EntityId, new_owner_user_id: UUID, actor_user_id: UUID) -> OrganizationDTO:
         async with self._uow_factory() as uow:
-            org = await uow.organizations.get_by_id(org_id)
+            # Lock order: the organization row first (see
+            # SqlAlchemyOrganizationRepository.get_by_id_for_update). Holding
+            # it serializes this transfer against other transfers, user
+            # suspension/deactivation and owner-role revocation, so every
+            # check below runs against state no concurrent transaction can
+            # change until we commit.
+            org = await uow.organizations.get_by_id_for_update(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
+            # Only the *designated* owner can hand ownership over. Holding the
+            # org_owner role is not enough: co-owners and former owners hold
+            # it too and must not be able to take the organization.
+            if org.owner_user_id != actor_user_id:
+                raise NotOrganizationOwnerError()
             new_owner = await uow.users.get_by_id(EntityId(new_owner_user_id))
             if new_owner is None or new_owner.org_id != org.id:
                 raise UserNotFoundError(new_owner_user_id)
+            if new_owner.id == org.owner_user_id:
+                raise InvalidOwnershipTransferTargetError("already_owner")
+            if new_owner.status != UserStatus.ACTIVE:
+                raise InvalidOwnershipTransferTargetError("not_active")
+            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
+            if owner_role is None:
+                raise OwnerRoleNotConfiguredError(self._owner_system_role_name)
+
+            previous_owner_user_id = org.owner_user_id
             org.transfer_ownership(UserId(new_owner_user_id))
             await uow.organizations.update(org)
 
-            owner_role = await uow.roles.get_by_name(None, self._owner_system_role_name)
-            if owner_role is not None and await uow.user_role_assignments.get(UserId(new_owner_user_id), owner_role.id) is None:
+            if await uow.user_role_assignments.get(UserId(new_owner_user_id), owner_role.id) is None:
                 await uow.user_role_assignments.add(
                     UserRoleAssignment.create(user_id=UserId(new_owner_user_id), role_id=owner_role.id, org_id=OrgId(org.id))
                 )
+            # Same transaction: the previous owner stops being an owner at the
+            # moment the new one starts. Only the owner role is removed; any
+            # other roles they hold are left exactly as they were.
+            previous_assignment = await uow.user_role_assignments.get(previous_owner_user_id, owner_role.id)
+            if previous_assignment is not None:
+                await uow.user_role_assignments.delete(previous_assignment.id)
 
             events = org.pull_domain_events()
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action="ownership_transferred",
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
-                    metadata={"new_owner_user_id": str(new_owner_user_id)},
+                    metadata={
+                        "new_owner_user_id": str(new_owner_user_id),
+                        "previous_owner_user_id": str(previous_owner_user_id),
+                    },
                 )
             )
             await append_domain_events_to_outbox(
@@ -274,18 +303,30 @@ class OrganizationManagementService:
                 raise UserNotFoundError(user_id)
             return user_to_profile_dto(user)
 
-    async def _set_status(self, *, org_id: EntityId, action: str, transition, actor_user_id: UUID) -> OrganizationDTO:
+    async def _set_status(
+        self, *, org_id: EntityId, action: str, transition, actor_user_id: UUID, revoke_sessions: bool = False
+    ) -> OrganizationDTO:
         async with self._uow_factory() as uow:
-            org = await uow.organizations.get_by_id(org_id)
+            # Organization row first (FOR UPDATE), the same lock order as
+            # ownership transfer and user suspension. Authentication takes the
+            # matching FOR SHARE before issuing a session, so a login/refresh
+            # either finished before this lock was granted (its session is
+            # revoked below) or waits and then sees the new status.
+            org = await uow.organizations.get_by_id_for_update(org_id)
             if org is None:
                 raise OrganizationNotFoundError(org_id)
             transition(org)
             await uow.organizations.update(org)
             events = org.pull_domain_events()
+            # Suspending/deactivating must also end sessions that already
+            # exist; reactivation deliberately does not resurrect them (users
+            # log in again).
+            revoked_sessions = await uow.sessions.revoke_all_for_org(org.id) if revoke_sessions else None
             await uow.audit_logs.add(
                 AuditLogRecord.create(
                     org_id=org.id, category=AuditEventCategory.ORGANIZATION_CHANGE, action=action,
                     actor_user_id=actor_user_id, resource_type="organization", resource_id=str(org.id),
+                    metadata=None if revoked_sessions is None else {"revoked_sessions": revoked_sessions},
                 )
             )
             await append_domain_events_to_outbox(
@@ -298,10 +339,10 @@ class OrganizationManagementService:
             return _to_dto(org)
 
     async def suspend(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
-        return await self._set_status(org_id=org_id, action="organization_suspended", transition=Organization.suspend, actor_user_id=actor_user_id)
+        return await self._set_status(org_id=org_id, action="organization_suspended", transition=Organization.suspend, actor_user_id=actor_user_id, revoke_sessions=True)
 
     async def reactivate(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
         return await self._set_status(org_id=org_id, action="organization_reactivated", transition=Organization.reactivate, actor_user_id=actor_user_id)
 
     async def deactivate(self, *, org_id: EntityId, actor_user_id: UUID) -> OrganizationDTO:
-        return await self._set_status(org_id=org_id, action="organization_deactivated", transition=Organization.deactivate, actor_user_id=actor_user_id)
+        return await self._set_status(org_id=org_id, action="organization_deactivated", transition=Organization.deactivate, actor_user_id=actor_user_id, revoke_sessions=True)

@@ -80,10 +80,19 @@ class User(EventRecordingMixin):
 
     @classmethod
     def register(
-        cls, *, org_id: OrgId, email: Email, password_hash: str, display_name: str
+        cls,
+        *,
+        org_id: OrgId,
+        email: Email,
+        password_hash: str,
+        display_name: str,
+        user_id: EntityId | None = None,
     ) -> "User":
+        """`user_id` lets a caller that must reference the user before the
+        user exists (organization bootstrap: the org records its owner's id at
+        creation) assign the id up front instead of patching it afterwards."""
         user = cls(
-            id=EntityId(new_uuid7()),
+            id=user_id if user_id is not None else EntityId(new_uuid7()),
             org_id=org_id,
             email=email,
             password_hash=password_hash,

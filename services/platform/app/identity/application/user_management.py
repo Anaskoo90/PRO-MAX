@@ -24,6 +24,7 @@ from app.identity.domain.exceptions import (
     AvatarNotFoundError,
     EmailAlreadyRegisteredError,
     InvalidAvatarError,
+    OrganizationOwnerProtectedError,
     UserNotFoundError,
     WeakPasswordError,
 )
@@ -244,11 +245,18 @@ class UserManagementService:
         actor_user_id: UserId,
     ) -> UserProfileDTO:
         async with self._uow_factory() as uow:
+            # Organization row first (same lock order as ownership transfer):
+            # otherwise a transfer to this very user could commit between our
+            # "is this the owner?" check and our write, leaving the freshly
+            # designated owner suspended.
+            org = await uow.organizations.get_by_id_for_update(org_id)
             user = await uow.users.get_by_id(user_id)
             if user is None or user.org_id != org_id:
                 raise UserNotFoundError(user_id)
+            self._assert_not_organization_owner(org, user, action="suspend")
             user.suspend(reason=reason)
             await uow.users.update(user)
+            await self._revoke_all_sessions(uow, user)
             events = user.pull_domain_events()
             await uow.audit_logs.add(
                 AuditLogRecord.create(
@@ -317,6 +325,29 @@ class UserManagementService:
             user = await uow.users.get_by_id(user_id)
             if user is None:
                 raise UserNotFoundError(user_id)
+            # The plain read above only supplies org_id (immutable); the
+            # organization row is locked before anything is written, and the
+            # owner check runs against the locked, current row.
+            org = await uow.organizations.get_by_id_for_update(user.org_id)
+            self._assert_not_organization_owner(org, user, action="deactivate")
             user.deactivate()
             await uow.users.update(user)
+            await self._revoke_all_sessions(uow, user)
             await uow.commit()
+
+    @staticmethod
+    async def _revoke_all_sessions(uow, user: User) -> None:
+        """Same pattern password reset uses: a status change that bars the
+        account from authenticating must also kill every session it already
+        holds, otherwise outstanding refresh tokens keep working."""
+        for session in await uow.sessions.list_active_for_user(user.id):
+            session.revoke()
+            await uow.sessions.update(session)
+
+    @staticmethod
+    def _assert_not_organization_owner(org, user: User, *, action: str) -> None:
+        """The designated owner can only be removed from play after an
+        ownership transfer (OrganizationManagementService.transfer_ownership).
+        `org` must be the row loaded with get_by_id_for_update."""
+        if org is not None and org.owner_user_id == user.id:
+            raise OrganizationOwnerProtectedError(action)
